@@ -1,0 +1,634 @@
+bundle:
+  name: scaling_xgb
+
+# Variables that can be overridden per-target or via CLI
+variables:
+  env:
+    description: "Environment name"
+    default: dev
+  catalog:
+    description: "Unity Catalog name"
+    default: brian_gen_ai
+  schema:
+    description: "Schema/database name"
+    default: xgb_scaling
+
+# Workspace targets
+targets:
+  dev:
+    # Default target for local development
+    default: true
+    mode: development
+    workspace:
+      host: https://adb-984752964297111.11.azuredatabricks.net
+    variables:
+      env: dev
+      catalog: brian_gen_ai
+      schema: xgb_scaling
+
+  prod:
+    mode: production
+    workspace:
+      # TODO: Configure prod workspace
+      # host: https://your-prod-workspace.cloud.databricks.com
+    variables:
+      env: prod
+      catalog: your_prod_catalog  # TODO: Set prod catalog
+      schema: scaling_xgb_prod    # TODO: Set prod schema
+    # In prod, you might want to use a service principal
+    # run_as:
+    #   service_principal_name: your-sp@your-workspace.com
+
+# Job and cluster definitions
+resources:
+  jobs:
+    generate_data_job:
+      name: "[${var.env}] Generate Imbalanced Dataset"
+      description: "Generates synthetic imbalanced classification dataset for XGBoost scaling tests"
+      
+      # Job-level parameters (passed to notebook)
+      parameters:
+        - name: env
+          default: ${var.env}
+        - name: run_mode
+          default: full
+        - name: json_params
+          default: "{}"
+
+      tasks:
+        - task_key: generate_data
+          notebook_task:
+            notebook_path: ./notebooks/generate_imbalanced_data.ipynb
+            base_parameters:
+              env: "{{job.parameters.env}}"
+              run_mode: "{{job.parameters.run_mode}}"
+              json_params: "{{job.parameters.json_params}}"
+            source: WORKSPACE
+          
+          # Job cluster definition (Azure)
+          new_cluster:
+            spark_version: "17.3.x-scala2.13"
+            node_type_id: "Standard_D4s_v3"    # 4 cores, 16GB RAM
+            num_workers: 4                      # Adjust for dataset size
+            
+            # Optional: Use cluster policy for governance
+            # policy_id: "your-policy-id"
+            
+            spark_conf:
+              # Recommended for large data generation
+              spark.sql.shuffle.partitions: "200"
+              spark.databricks.delta.optimizeWrite.enabled: "true"
+            
+            # Azure spot instances for cost savings (dev only)
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1  # -1 = up to on-demand price
+
+      # Email notifications (optional)
+      # email_notifications:
+      #   on_failure:
+      #     - your-email@company.com
+
+      # Tags for cost tracking
+      tags:
+        project: scaling_xgb
+        environment: ${var.env}
+
+    # XGBoost Single-Node Training Jobs
+    # Three hardware configurations for benchmarking
+    
+    train_xgb_single_d16:
+      name: "[${var.env}] Train XGBoost Single (D16s_v5)"
+      description: "Train XGBoost on single node - 16 cores, 64GB RAM"
+      
+      parameters:
+        - name: data_size
+          default: tiny
+        - name: node_type
+          default: D16sv5
+        - name: run_mode
+          default: full
+        - name: table_name
+          default: ""
+
+      tasks:
+        - task_key: train
+          notebook_task:
+            notebook_path: ./notebooks/train_xgb_single.ipynb
+            base_parameters:
+              data_size: "{{job.parameters.data_size}}"
+              node_type: "{{job.parameters.node_type}}"
+              run_mode: "{{job.parameters.run_mode}}"
+              table_name: "{{job.parameters.table_name}}"
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+            source: WORKSPACE
+          
+          new_cluster:
+            spark_version: "17.3.x-cpu-ml-scala2.13"  # ML Runtime 17.3 LTS with XGBoost
+            node_type_id: "Standard_D16s_v5"  # 16 cores, 64GB RAM
+            num_workers: 0  # Single node (driver only)
+            data_security_mode: SINGLE_USER  # Enable Unity Catalog
+            
+            spark_conf:
+              spark.databricks.cluster.profile: singleNode
+              spark.master: "local[*, 4]"
+            
+            custom_tags:
+              ResourceClass: SingleNode
+            
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1
+          
+          libraries:
+            - pypi:
+                package: psutil  # Required for MLflow system metrics
+
+      tags:
+        project: scaling_xgb
+        environment: ${var.env}
+        node_type: D16sv5
+
+    train_xgb_single_e16:
+      name: "[${var.env}] Train XGBoost Single (E16s_v5)"
+      description: "Train XGBoost on single node - 16 cores, 128GB RAM"
+      
+      parameters:
+        - name: data_size
+          default: small
+        - name: node_type
+          default: E16sv5
+        - name: run_mode
+          default: full
+        - name: table_name
+          default: ""
+
+      tasks:
+        - task_key: train
+          notebook_task:
+            notebook_path: ./notebooks/train_xgb_single.ipynb
+            base_parameters:
+              data_size: "{{job.parameters.data_size}}"
+              node_type: "{{job.parameters.node_type}}"
+              run_mode: "{{job.parameters.run_mode}}"
+              table_name: "{{job.parameters.table_name}}"
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+            source: WORKSPACE
+          
+          new_cluster:
+            spark_version: "17.3.x-cpu-ml-scala2.13"  # ML Runtime 17.3 LTS with XGBoost
+            node_type_id: "Standard_E16s_v5"  # 16 cores, 128GB RAM
+            num_workers: 0  # Single node (driver only)
+            data_security_mode: SINGLE_USER  # Enable Unity Catalog
+            
+            spark_conf:
+              spark.databricks.cluster.profile: singleNode
+              spark.master: "local[*, 4]"
+            
+            custom_tags:
+              ResourceClass: SingleNode
+            
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1
+          
+          libraries:
+            - pypi:
+                package: psutil  # Required for MLflow system metrics
+
+      tags:
+        project: scaling_xgb
+        environment: ${var.env}
+        node_type: E16sv5
+
+    train_xgb_single_e32:
+      name: "[${var.env}] Train XGBoost Single (E32s_v5)"
+      description: "Train XGBoost on single node - 32 cores, 256GB RAM"
+      
+      parameters:
+        - name: data_size
+          default: medium
+        - name: node_type
+          default: E32sv5
+        - name: run_mode
+          default: full
+        - name: table_name
+          default: ""
+
+      tasks:
+        - task_key: train
+          notebook_task:
+            notebook_path: ./notebooks/train_xgb_single.ipynb
+            base_parameters:
+              data_size: "{{job.parameters.data_size}}"
+              node_type: "{{job.parameters.node_type}}"
+              run_mode: "{{job.parameters.run_mode}}"
+              table_name: "{{job.parameters.table_name}}"
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+            source: WORKSPACE
+          
+          new_cluster:
+            spark_version: "17.3.x-cpu-ml-scala2.13"  # ML Runtime 17.3 LTS with XGBoost
+            node_type_id: "Standard_E32s_v5"  # 32 cores, 256GB RAM
+            num_workers: 0  # Single node (driver only)
+            data_security_mode: SINGLE_USER  # Enable Unity Catalog
+            
+            spark_conf:
+              spark.databricks.cluster.profile: singleNode
+              spark.master: "local[*, 4]"
+            
+            custom_tags:
+              ResourceClass: SingleNode
+            
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1
+          
+          libraries:
+            - pypi:
+                package: psutil  # Required for MLflow system metrics
+
+      tags:
+        project: scaling_xgb
+        environment: ${var.env}
+        node_type: E32sv5
+
+    # =========================================================================
+    # PERFORMANCE TEST JOBS
+    # =========================================================================
+    
+    # ---------------------------------------------------------------------------
+    # SINGLE-NODE BASELINES
+    # ---------------------------------------------------------------------------
+    
+    # Single-node 1M rows on D16
+    perf_single_1m_d16:
+      name: "[${var.env}] Perf: Single 1M D16"
+      description: "Baseline - Single node XGBoost with 1M rows on D16s_v5"
+
+      tasks:
+        - task_key: train
+          notebook_task:
+            notebook_path: ./notebooks/train_xgb_single.ipynb
+            base_parameters:
+              data_size: "small"
+              node_type: "D16sv5"
+              run_mode: "full"
+              table_name: "imbalanced_1m"
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+            source: WORKSPACE
+          
+          new_cluster:
+            spark_version: "17.3.x-cpu-ml-scala2.13"
+            node_type_id: "Standard_D16s_v5"
+            num_workers: 0
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.databricks.cluster.profile: singleNode
+              spark.master: "local[*, 4]"
+            custom_tags:
+              ResourceClass: SingleNode
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1
+          
+          libraries:
+            - pypi:
+                package: psutil
+
+      tags:
+        project: scaling_xgb
+        environment: ${var.env}
+        test_type: baseline
+        data_size: 1m
+        node_type: D16sv5
+
+    # ---------------------------------------------------------------------------
+    # PHASE 1: WORKER SCALING (1M data, D8 nodes)
+    # ---------------------------------------------------------------------------
+    
+    # 2 workers with D8 nodes
+    perf_ray_1m_2w_d8:
+      name: "[${var.env}] Perf: Ray 1M 2W D8"
+      description: "Ray distributed - 1M rows, 2 workers on D8s_v5"
+
+      tasks:
+        - task_key: train_ray
+          notebook_task:
+            notebook_path: ./notebooks/train_xgb_ray.ipynb
+            base_parameters:
+              data_size: "small"
+              node_type: "D8sv5x2"
+              run_mode: "full"
+              num_workers: "2"
+              cpus_per_worker: "6"
+              warehouse_id: "148ccb90800933a1"
+              table_name: "imbalanced_1m"
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+            source: WORKSPACE
+          
+          new_cluster:
+            spark_version: "17.3.x-cpu-ml-scala2.13"
+            node_type_id: "Standard_D8s_v5"
+            num_workers: 2
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.databricks.delta.optimizeWrite.enabled: "true"
+              spark.task.cpus: "1"
+            custom_tags:
+              ResourceClass: MultiNode
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1
+          
+          libraries:
+            - pypi:
+                package: psutil
+
+      tags:
+        project: scaling_xgb
+        environment: ${var.env}
+        test_type: worker_scaling
+        data_size: 1m
+        num_workers: "2"
+        node_type: D8sv5
+
+    # 4 workers with D8 nodes
+    perf_ray_1m_4w_d8:
+      name: "[${var.env}] Perf: Ray 1M 4W D8"
+      description: "Ray distributed - 1M rows, 4 workers on D8s_v5"
+
+      tasks:
+        - task_key: train_ray
+          notebook_task:
+            notebook_path: ./notebooks/train_xgb_ray.ipynb
+            base_parameters:
+              data_size: "small"
+              node_type: "D8sv5x4"
+              run_mode: "full"
+              num_workers: "4"
+              cpus_per_worker: "6"
+              warehouse_id: "148ccb90800933a1"
+              table_name: "imbalanced_1m"
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+            source: WORKSPACE
+          
+          new_cluster:
+            spark_version: "17.3.x-cpu-ml-scala2.13"
+            node_type_id: "Standard_D8s_v5"
+            num_workers: 4
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.databricks.delta.optimizeWrite.enabled: "true"
+              spark.task.cpus: "1"
+            custom_tags:
+              ResourceClass: MultiNode
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1
+          
+          libraries:
+            - pypi:
+                package: psutil
+
+      tags:
+        project: scaling_xgb
+        environment: ${var.env}
+        test_type: worker_scaling
+        data_size: 1m
+        num_workers: "4"
+        node_type: D8sv5
+
+    # 8 workers with D8 nodes
+    perf_ray_1m_8w_d8:
+      name: "[${var.env}] Perf: Ray 1M 8W D8"
+      description: "Ray distributed - 1M rows, 8 workers on D8s_v5"
+
+      tasks:
+        - task_key: train_ray
+          notebook_task:
+            notebook_path: ./notebooks/train_xgb_ray.ipynb
+            base_parameters:
+              data_size: "small"
+              node_type: "D8sv5x8"
+              run_mode: "full"
+              num_workers: "8"
+              cpus_per_worker: "6"
+              warehouse_id: "148ccb90800933a1"
+              table_name: "imbalanced_1m"
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+            source: WORKSPACE
+          
+          new_cluster:
+            spark_version: "17.3.x-cpu-ml-scala2.13"
+            node_type_id: "Standard_D8s_v5"
+            num_workers: 8
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.databricks.delta.optimizeWrite.enabled: "true"
+              spark.task.cpus: "1"
+            custom_tags:
+              ResourceClass: MultiNode
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1
+          
+          libraries:
+            - pypi:
+                package: psutil
+
+      tags:
+        project: scaling_xgb
+        environment: ${var.env}
+        test_type: worker_scaling
+        data_size: 1m
+        num_workers: "8"
+        node_type: D8sv5
+
+    # ---------------------------------------------------------------------------
+    # PHASE 2: 1M ON LARGER NODES (4 workers, D16 nodes)
+    # ---------------------------------------------------------------------------
+    
+    # 1M data with 4 workers on D16
+    perf_ray_1m_4w_d16:
+      name: "[${var.env}] Perf: Ray 1M 4W D16"
+      description: "Ray distributed - 1M rows, 4 workers on D16s_v5"
+
+      tasks:
+        - task_key: train_ray
+          notebook_task:
+            notebook_path: ./notebooks/train_xgb_ray.ipynb
+            base_parameters:
+              data_size: "small"
+              node_type: "D16sv5x4"
+              run_mode: "full"
+              num_workers: "4"
+              cpus_per_worker: "14"
+              warehouse_id: "148ccb90800933a1"
+              table_name: "imbalanced_1m"
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+            source: WORKSPACE
+          
+          new_cluster:
+            spark_version: "17.3.x-cpu-ml-scala2.13"
+            node_type_id: "Standard_D16s_v5"
+            num_workers: 4
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.databricks.delta.optimizeWrite.enabled: "true"
+              spark.task.cpus: "1"
+            custom_tags:
+              ResourceClass: MultiNode
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1
+          
+          libraries:
+            - pypi:
+                package: psutil
+
+      tags:
+        project: scaling_xgb
+        environment: ${var.env}
+        test_type: data_scaling
+        data_size: 1m
+        num_workers: "4"
+        node_type: D16sv5
+
+    # ---------------------------------------------------------------------------
+    # PHASE 3: 10M DISTRIBUTED RAY TESTS
+    # ---------------------------------------------------------------------------
+
+    # 10M data with 4 workers on D16
+    perf_ray_10m_4w_d16:
+      name: "[${var.env}] Perf: Ray 10M 4W D16"
+      description: "Ray distributed - 10M rows, 4 workers on D16s_v5"
+
+      tasks:
+        - task_key: train_ray
+          notebook_task:
+            notebook_path: ./notebooks/train_xgb_ray.ipynb
+            base_parameters:
+              data_size: "medium"
+              node_type: "D16sv5x4"
+              run_mode: "full"
+              num_workers: "4"
+              cpus_per_worker: "14"
+              warehouse_id: "148ccb90800933a1"
+              table_name: "imbalanced_10m"
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+            source: WORKSPACE
+
+          new_cluster:
+            spark_version: "17.3.x-cpu-ml-scala2.13"
+            node_type_id: "Standard_D16s_v5"
+            num_workers: 4
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.databricks.delta.optimizeWrite.enabled: "true"
+              spark.task.cpus: "1"
+            custom_tags:
+              ResourceClass: MultiNode
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1
+
+          libraries:
+            - pypi:
+                package: psutil
+
+      tags:
+        project: scaling_xgb
+        environment: ${var.env}
+        test_type: data_scaling
+        data_size: 10m
+        num_workers: "4"
+        node_type: D16sv5
+
+    # 10M data with 4 workers on E16
+    perf_ray_10m_4w_e16:
+      name: "[${var.env}] Perf: Ray 10M 4W E16"
+      description: "Ray distributed - 10M rows, 4 workers on E16s_v5"
+
+      tasks:
+        - task_key: train_ray
+          notebook_task:
+            notebook_path: ./notebooks/train_xgb_ray.ipynb
+            base_parameters:
+              data_size: "medium"
+              node_type: "E16sv5x4"
+              run_mode: "full"
+              num_workers: "4"
+              cpus_per_worker: "14"
+              warehouse_id: "148ccb90800933a1"
+              table_name: "imbalanced_10m"
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+            source: WORKSPACE
+
+          new_cluster:
+            spark_version: "17.3.x-cpu-ml-scala2.13"
+            node_type_id: "Standard_E16s_v5"
+            num_workers: 4
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.databricks.delta.optimizeWrite.enabled: "true"
+              spark.task.cpus: "1"
+            custom_tags:
+              ResourceClass: MultiNode
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1
+
+          libraries:
+            - pypi:
+                package: psutil
+
+      tags:
+        project: scaling_xgb
+        environment: ${var.env}
+        test_type: data_scaling
+        data_size: 10m
+        num_workers: "4"
+        node_type: E16sv5
+
+    # ---------------------------------------------------------------------------
+    # LEGACY / DEBUG JOBS
+    # ---------------------------------------------------------------------------
+
+    # Debug job for Ray setup diagnosis
+    debug_ray_setup:
+      name: "[${var.env}] Debug Ray Setup"
+      description: "Diagnostic notebook to test Ray on Spark"
+
+      tasks:
+        - task_key: debug
+          notebook_task:
+            notebook_path: ./notebooks/debug_ray_setup.ipynb
+            source: WORKSPACE
+          
+          new_cluster:
+            spark_version: "17.3.x-cpu-ml-scala2.13"
+            node_type_id: "Standard_D8s_v5"
+            num_workers: 2
+            data_security_mode: SINGLE_USER
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1
+          
+          libraries:
+            - pypi:
+                package: psutil
+
+      tags:
+        project: scaling_xgb
+        environment: ${var.env}
