@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.cursor/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Databricks
+.databricks/
+*.whl
+
+# Never commit secrets
+.env
+.env.*
+*.pem
+*.key
+credentials.json
+secrets.json
+
+# OS
+.DS_Store
+Thumbs.db
