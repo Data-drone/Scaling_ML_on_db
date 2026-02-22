@@ -601,6 +601,119 @@ resources:
         num_workers: "4"
         node_type: E16sv5
 
+    # =========================================================================
+    # PHASE 4: 100M PLASMA TUNING EXPERIMENTS
+    # Test hypothesis: at 100M rows, object store config matters
+    # =========================================================================
+
+    # ---------------------------------------------------------------------------
+    # 100M Plasma: 8 workers D16 (default object store)
+    # ---------------------------------------------------------------------------
+    plasma_100m_8w_d16_default:
+      name: "[${var.env}] Plasma: 100M 8W D16 Default"
+      description: "Plasma tuning - 100M rows, 8 workers D16, default object store"
+
+      tasks:
+        - task_key: train_plasma
+          notebook_task:
+            notebook_path: ./notebooks/train_xgb_ray_plasma.ipynb
+            base_parameters:
+              data_size: "large"
+              node_type: "D16sv5x8"
+              run_mode: "full"
+              num_workers: "8"
+              cpus_per_worker: "14"
+              warehouse_id: "148ccb90800933a1"
+              table_name: "imbalanced_100m"
+              obj_store_mem_gb: "0"
+              heap_mem_gb: "0"
+              allow_slow_storage: "0"
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+            source: WORKSPACE
+
+          new_cluster:
+            spark_version: "17.3.x-cpu-ml-scala2.13"
+            node_type_id: "Standard_D16s_v5"
+            num_workers: 8
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.databricks.delta.optimizeWrite.enabled: "true"
+              spark.task.cpus: "1"
+              spark.executorEnv.OMP_NUM_THREADS: "15"
+            custom_tags:
+              ResourceClass: MultiNode
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1
+
+          libraries:
+            - pypi:
+                package: psutil
+
+      tags:
+        project: scaling_xgb
+        environment: ${var.env}
+        test_type: plasma_tuning
+        data_size: 100m
+        num_workers: "8"
+        node_type: D16sv5
+        plasma_config: default
+
+    # ---------------------------------------------------------------------------
+    # 100M Plasma: 8 workers E16, 32GB object store, allow_slow_storage=1
+    # ---------------------------------------------------------------------------
+    plasma_100m_8w_e16_os32:
+      name: "[${var.env}] Plasma: 100M 8W E16 OS32GB"
+      description: "Plasma tuning - 100M rows, 8 workers E16, 32GB object store, slow storage"
+
+      tasks:
+        - task_key: train_plasma
+          notebook_task:
+            notebook_path: ./notebooks/train_xgb_ray_plasma.ipynb
+            base_parameters:
+              data_size: "large"
+              node_type: "E16sv5x8"
+              run_mode: "full"
+              num_workers: "8"
+              cpus_per_worker: "14"
+              warehouse_id: "148ccb90800933a1"
+              table_name: "imbalanced_100m"
+              obj_store_mem_gb: "32"
+              heap_mem_gb: "0"
+              allow_slow_storage: "1"
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+            source: WORKSPACE
+
+          new_cluster:
+            spark_version: "17.3.x-cpu-ml-scala2.13"
+            node_type_id: "Standard_E16s_v5"
+            num_workers: 8
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.databricks.delta.optimizeWrite.enabled: "true"
+              spark.task.cpus: "1"
+              spark.executorEnv.OMP_NUM_THREADS: "15"
+            custom_tags:
+              ResourceClass: MultiNode
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1
+
+          libraries:
+            - pypi:
+                package: psutil
+
+      tags:
+        project: scaling_xgb
+        environment: ${var.env}
+        test_type: plasma_tuning
+        data_size: 100m
+        num_workers: "8"
+        node_type: E16sv5
+        plasma_config: os32_slow
+
     # ---------------------------------------------------------------------------
     # LEGACY / DEBUG JOBS
     # ---------------------------------------------------------------------------
