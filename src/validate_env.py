@@ -96,22 +96,43 @@ def _check_dbr_version(report: EnvironmentReport, min_version: str = "17.3"):
 
 
 def _check_ml_runtime(report: EnvironmentReport, require_gpu: bool = False):
-    """Check that ML Runtime is being used."""
+    """Check that ML Runtime is being used.
+
+    Checks both DATABRICKS_RUNTIME_VERSION and the Spark config
+    spark.databricks.clusterUsageTags.sparkVersion, since the env var
+    may be abbreviated (e.g., '17.3') while Spark config has the full
+    version string (e.g., '17.3.x-cpu-ml-scala2.13').
+    """
     dbr = os.environ.get("DATABRICKS_RUNTIME_VERSION", "")
     if not dbr:
         report.add("ML Runtime", False, "Cannot verify — not on Databricks", "warning")
         return
 
+    # Also check the Spark config which has the full version string
+    spark_version = ""
+    try:
+        from pyspark.sql import SparkSession
+        spark = SparkSession.getActiveSession()
+        if spark:
+            spark_version = spark.conf.get(
+                "spark.databricks.clusterUsageTags.sparkVersion", ""
+            )
+    except Exception:
+        pass
+
+    # Use whichever source contains more detail
+    version_to_check = spark_version if spark_version else dbr
+
     if require_gpu:
-        if "gpu-ml" in dbr:
-            report.add("ML Runtime", True, f"GPU ML Runtime detected: {dbr}")
+        if "gpu-ml" in version_to_check or "gpu-ml" in dbr:
+            report.add("ML Runtime", True, f"GPU ML Runtime detected: {version_to_check or dbr}")
         else:
-            report.add("ML Runtime", False, f"GPU ML Runtime required but got: {dbr}. Use '17.3.x-gpu-ml-scala2.13'")
+            report.add("ML Runtime", False, f"GPU ML Runtime required but got: {version_to_check or dbr}. Use '17.3.x-gpu-ml-scala2.13'")
     else:
-        if "ml" in dbr:
-            report.add("ML Runtime", True, f"ML Runtime detected: {dbr}")
+        if "ml" in version_to_check or "ml" in dbr:
+            report.add("ML Runtime", True, f"ML Runtime detected: {version_to_check or dbr}")
         else:
-            report.add("ML Runtime", False, f"ML Runtime required but got: {dbr}. Use '17.3.x-cpu-ml-scala2.13'")
+            report.add("ML Runtime", False, f"ML Runtime required but got: {version_to_check or dbr}. Use '17.3.x-cpu-ml-scala2.13'")
 
 
 def _check_omp_config(report: EnvironmentReport, track: str):
