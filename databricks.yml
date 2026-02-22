@@ -307,6 +307,49 @@ resources:
         data_size: 1m
         node_type: D16sv5
 
+    # Single-node 10M rows on E16 (E16 baseline)
+    perf_single_10m_e16:
+      name: "[${var.env}] Perf: Single 10M E16"
+      description: "Baseline - Single node XGBoost with 10M rows on E16s_v5"
+
+      tasks:
+        - task_key: train
+          notebook_task:
+            notebook_path: ./notebooks/train_xgb_single.ipynb
+            base_parameters:
+              data_size: "medium"
+              node_type: "E16sv5"
+              run_mode: "full"
+              table_name: "imbalanced_10m"
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+            source: WORKSPACE
+
+          new_cluster:
+            spark_version: "17.3.x-cpu-ml-scala2.13"
+            node_type_id: "Standard_E16s_v5"
+            num_workers: 0
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.databricks.cluster.profile: singleNode
+              spark.master: "local[*, 4]"
+            custom_tags:
+              ResourceClass: SingleNode
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1
+
+          libraries:
+            - pypi:
+                package: psutil
+
+      tags:
+        project: scaling_xgb
+        environment: ${var.env}
+        test_type: baseline
+        data_size: 10m
+        node_type: E16sv5
+
     # ---------------------------------------------------------------------------
     # PHASE 1: WORKER SCALING (1M data, D8 nodes)
     # ---------------------------------------------------------------------------
@@ -600,6 +643,331 @@ resources:
         data_size: 10m
         num_workers: "4"
         node_type: E16sv5
+
+    # =========================================================================
+    # PHASE 4: 100M PLASMA TUNING EXPERIMENTS
+    # Test hypothesis: at 100M rows, object store config matters
+    # =========================================================================
+
+    # ---------------------------------------------------------------------------
+    # 100M Plasma: 8 workers D16 (default object store)
+    # ---------------------------------------------------------------------------
+    plasma_100m_8w_d16_default:
+      name: "[${var.env}] Plasma: 100M 8W D16 Default"
+      description: "Plasma tuning - 100M rows, 8 workers D16, default object store"
+
+      tasks:
+        - task_key: train_plasma
+          notebook_task:
+            notebook_path: ./notebooks/train_xgb_ray_plasma.ipynb
+            base_parameters:
+              data_size: "large"
+              node_type: "D16sv5x8"
+              run_mode: "full"
+              num_workers: "8"
+              cpus_per_worker: "14"
+              warehouse_id: "148ccb90800933a1"
+              table_name: "imbalanced_100m"
+              obj_store_mem_gb: "0"
+              heap_mem_gb: "0"
+              allow_slow_storage: "0"
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+            source: WORKSPACE
+
+          new_cluster:
+            spark_version: "17.3.x-cpu-ml-scala2.13"
+            node_type_id: "Standard_D16s_v5"
+            num_workers: 8
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.databricks.delta.optimizeWrite.enabled: "true"
+              spark.task.cpus: "1"
+              spark.executorEnv.OMP_NUM_THREADS: "15"
+            custom_tags:
+              ResourceClass: MultiNode
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1
+
+          libraries:
+            - pypi:
+                package: psutil
+
+      tags:
+        project: scaling_xgb
+        environment: ${var.env}
+        test_type: plasma_tuning
+        data_size: 100m
+        num_workers: "8"
+        node_type: D16sv5
+        plasma_config: default
+
+    # ---------------------------------------------------------------------------
+    # 100M Plasma: 8 workers E16, 32GB object store, allow_slow_storage=1
+    # ---------------------------------------------------------------------------
+    plasma_100m_8w_e16_os32:
+      name: "[${var.env}] Plasma: 100M 8W E16 OS32GB"
+      description: "Plasma tuning - 100M rows, 8 workers E16, 32GB object store, slow storage"
+
+      tasks:
+        - task_key: train_plasma
+          notebook_task:
+            notebook_path: ./notebooks/train_xgb_ray_plasma.ipynb
+            base_parameters:
+              data_size: "large"
+              node_type: "E16sv5x8"
+              run_mode: "full"
+              num_workers: "8"
+              cpus_per_worker: "14"
+              warehouse_id: "148ccb90800933a1"
+              table_name: "imbalanced_100m"
+              obj_store_mem_gb: "32"
+              heap_mem_gb: "0"
+              allow_slow_storage: "1"
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+            source: WORKSPACE
+
+          new_cluster:
+            spark_version: "17.3.x-cpu-ml-scala2.13"
+            node_type_id: "Standard_E16s_v5"
+            num_workers: 8
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.databricks.delta.optimizeWrite.enabled: "true"
+              spark.task.cpus: "1"
+              spark.executorEnv.OMP_NUM_THREADS: "15"
+            custom_tags:
+              ResourceClass: MultiNode
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1
+
+          libraries:
+            - pypi:
+                package: psutil
+
+      tags:
+        project: scaling_xgb
+        environment: ${var.env}
+        test_type: plasma_tuning
+        data_size: 100m
+        num_workers: "8"
+        node_type: E16sv5
+        plasma_config: os32_slow
+
+    # =========================================================================
+    # GPU SCALING JOBS (NCT4 VMs)
+    # =========================================================================
+
+    # ---------------------------------------------------------------------------
+    # GPU SINGLE-NODE JOBS
+    # ---------------------------------------------------------------------------
+
+    # GPU Single-Node: NC4as_T4_v3 (1x T4, 4 cores, 28GB RAM)
+    train_xgb_gpu_nc4_t4:
+      name: "[${var.env}] Train XGBoost GPU (NC4as_T4_v3)"
+      description: "GPU XGBoost on single T4 GPU - 4 cores, 28GB RAM, 1x T4 16GB"
+
+      parameters:
+        - name: data_size
+          default: small
+        - name: node_type
+          default: NC4asT4v3
+        - name: gpu_id
+          default: "0"
+        - name: run_mode
+          default: full
+        - name: table_name
+          default: ""
+
+      tasks:
+        - task_key: train
+          notebook_task:
+            notebook_path: ./notebooks/train_xgb_gpu.ipynb
+            base_parameters:
+              data_size: "{{job.parameters.data_size}}"
+              node_type: "{{job.parameters.node_type}}"
+              gpu_id: "{{job.parameters.gpu_id}}"
+              run_mode: "{{job.parameters.run_mode}}"
+              table_name: "{{job.parameters.table_name}}"
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+            source: WORKSPACE
+
+          new_cluster:
+            spark_version: "17.3.x-gpu-ml-scala2.13"
+            node_type_id: "Standard_NC4as_T4_v3"
+            num_workers: 0
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.databricks.cluster.profile: singleNode
+              spark.master: "local[*, 4]"
+            custom_tags:
+              ResourceClass: SingleNode
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1
+
+          libraries:
+            - pypi:
+                package: psutil
+
+      tags:
+        project: scaling_xgb
+        environment: ${var.env}
+        node_type: NC4asT4v3
+        gpu: "true"
+
+    # GPU Multi-GPU: NC16as_T4_v3 (4x T4, 16 cores, 110GB RAM)
+    train_xgb_gpu_nc16_t4:
+      name: "[${var.env}] Train XGBoost GPU (NC16as_T4_v3)"
+      description: "GPU XGBoost on 4x T4 GPUs - 16 cores, 110GB RAM, 4x T4 64GB total"
+
+      parameters:
+        - name: data_size
+          default: medium
+        - name: node_type
+          default: NC16asT4v3
+        - name: gpu_id
+          default: "0"
+        - name: run_mode
+          default: full
+        - name: table_name
+          default: ""
+
+      tasks:
+        - task_key: train
+          notebook_task:
+            notebook_path: ./notebooks/train_xgb_gpu.ipynb
+            base_parameters:
+              data_size: "{{job.parameters.data_size}}"
+              node_type: "{{job.parameters.node_type}}"
+              gpu_id: "{{job.parameters.gpu_id}}"
+              run_mode: "{{job.parameters.run_mode}}"
+              table_name: "{{job.parameters.table_name}}"
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+            source: WORKSPACE
+
+          new_cluster:
+            spark_version: "17.3.x-gpu-ml-scala2.13"
+            node_type_id: "Standard_NC16as_T4_v3"
+            num_workers: 0
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.databricks.cluster.profile: singleNode
+              spark.master: "local[*, 4]"
+            custom_tags:
+              ResourceClass: SingleNode
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1
+
+          libraries:
+            - pypi:
+                package: psutil
+
+      tags:
+        project: scaling_xgb
+        environment: ${var.env}
+        node_type: NC16asT4v3
+        gpu: "true"
+
+    # ---------------------------------------------------------------------------
+    # GPU PERFORMANCE TEST JOBS
+    # ---------------------------------------------------------------------------
+
+    # GPU 1M baseline on single T4
+    perf_gpu_1m_nc4_t4:
+      name: "[${var.env}] Perf: GPU 1M NC4as_T4"
+      description: "GPU baseline - 1M rows on single T4 (NC4as_T4_v3)"
+
+      tasks:
+        - task_key: train
+          notebook_task:
+            notebook_path: ./notebooks/train_xgb_gpu.ipynb
+            base_parameters:
+              data_size: "small"
+              node_type: "NC4asT4v3"
+              gpu_id: "0"
+              run_mode: "full"
+              table_name: "imbalanced_1m"
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+            source: WORKSPACE
+
+          new_cluster:
+            spark_version: "17.3.x-gpu-ml-scala2.13"
+            node_type_id: "Standard_NC4as_T4_v3"
+            num_workers: 0
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.databricks.cluster.profile: singleNode
+              spark.master: "local[*, 4]"
+            custom_tags:
+              ResourceClass: SingleNode
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1
+
+          libraries:
+            - pypi:
+                package: psutil
+
+      tags:
+        project: scaling_xgb
+        environment: ${var.env}
+        test_type: baseline
+        data_size: 1m
+        node_type: NC4asT4v3
+        gpu: "true"
+
+    # GPU 10M on single T4
+    perf_gpu_10m_nc4_t4:
+      name: "[${var.env}] Perf: GPU 10M NC4as_T4"
+      description: "GPU scaling test - 10M rows on single T4 (NC4as_T4_v3)"
+
+      tasks:
+        - task_key: train
+          notebook_task:
+            notebook_path: ./notebooks/train_xgb_gpu.ipynb
+            base_parameters:
+              data_size: "medium"
+              node_type: "NC4asT4v3"
+              gpu_id: "0"
+              run_mode: "full"
+              table_name: "imbalanced_10m"
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+            source: WORKSPACE
+
+          new_cluster:
+            spark_version: "17.3.x-gpu-ml-scala2.13"
+            node_type_id: "Standard_NC4as_T4_v3"
+            num_workers: 0
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.databricks.cluster.profile: singleNode
+              spark.master: "local[*, 4]"
+            custom_tags:
+              ResourceClass: SingleNode
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1
+
+          libraries:
+            - pypi:
+                package: psutil
+
+      tags:
+        project: scaling_xgb
+        environment: ${var.env}
+        test_type: data_scaling
+        data_size: 10m
+        node_type: NC4asT4v3
+        gpu: "true"
 
     # ---------------------------------------------------------------------------
     # LEGACY / DEBUG JOBS
