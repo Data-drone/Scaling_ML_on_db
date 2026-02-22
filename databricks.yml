@@ -340,6 +340,7 @@ resources:
             spark_conf:
               spark.databricks.delta.optimizeWrite.enabled: "true"
               spark.task.cpus: "1"
+              spark.executorEnv.OMP_NUM_THREADS: "7"  # Layer 1 OMP fix
             custom_tags:
               ResourceClass: MultiNode
             azure_attributes:
@@ -387,6 +388,7 @@ resources:
             spark_conf:
               spark.databricks.delta.optimizeWrite.enabled: "true"
               spark.task.cpus: "1"
+              spark.executorEnv.OMP_NUM_THREADS: "7"  # Layer 1 OMP fix
             custom_tags:
               ResourceClass: MultiNode
             azure_attributes:
@@ -434,6 +436,7 @@ resources:
             spark_conf:
               spark.databricks.delta.optimizeWrite.enabled: "true"
               spark.task.cpus: "1"
+              spark.executorEnv.OMP_NUM_THREADS: "7"  # Layer 1 OMP fix
             custom_tags:
               ResourceClass: MultiNode
             azure_attributes:
@@ -485,6 +488,7 @@ resources:
             spark_conf:
               spark.databricks.delta.optimizeWrite.enabled: "true"
               spark.task.cpus: "1"
+              spark.executorEnv.OMP_NUM_THREADS: "15"  # Layer 1 OMP fix
             custom_tags:
               ResourceClass: MultiNode
             azure_attributes:
@@ -536,6 +540,7 @@ resources:
             spark_conf:
               spark.databricks.delta.optimizeWrite.enabled: "true"
               spark.task.cpus: "1"
+              spark.executorEnv.OMP_NUM_THREADS: "15"  # Layer 1 OMP fix
             custom_tags:
               ResourceClass: MultiNode
             azure_attributes:
@@ -583,6 +588,7 @@ resources:
             spark_conf:
               spark.databricks.delta.optimizeWrite.enabled: "true"
               spark.task.cpus: "1"
+              spark.executorEnv.OMP_NUM_THREADS: "15"  # Layer 1 OMP fix
             custom_tags:
               ResourceClass: MultiNode
             azure_attributes:
@@ -600,6 +606,140 @@ resources:
         data_size: 10m
         num_workers: "4"
         node_type: E16sv5
+
+    
+    # ---------------------------------------------------------------------------
+    # PHASE 4: OMP FIX VALIDATION + 30M EXPERIMENTS
+    # ---------------------------------------------------------------------------
+
+    perf_ray_10m_2w_d16_omp:
+      name: "[${var.env}] Perf: Ray 10M 2W D16 OMP"
+      description: "Ray distributed - 10M rows, 2 workers D16 with OMP fix"
+      tasks:
+        - task_key: train_ray
+          notebook_task:
+            notebook_path: ./notebooks/train_xgb_ray.ipynb
+            base_parameters:
+              data_size: "medium"
+              node_type: "D16sv5x2"
+              run_mode: "full"
+              num_workers: "2"
+              cpus_per_worker: "14"
+              warehouse_id: "148ccb90800933a1"
+              table_name: "imbalanced_10m"
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+            source: WORKSPACE
+          new_cluster:
+            spark_version: "17.3.x-cpu-ml-scala2.13"
+            node_type_id: "Standard_D16s_v5"
+            num_workers: 2
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.databricks.delta.optimizeWrite.enabled: "true"
+              spark.task.cpus: "1"
+              spark.executorEnv.OMP_NUM_THREADS: "15"
+            custom_tags:
+              ResourceClass: MultiNode
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1
+          libraries:
+            - pypi:
+                package: psutil
+      tags:
+        project: scaling_xgb
+        environment: ${var.env}
+        test_type: omp_validation
+        data_size: 10m
+        num_workers: "2"
+        node_type: D16sv5
+
+    perf_ray_30m_4w_d16:
+      name: "[${var.env}] Perf: Ray 30M 4W D16"
+      description: "Ray distributed - 30M rows, 4 workers on D16s_v5"
+      tasks:
+        - task_key: train_ray
+          notebook_task:
+            notebook_path: ./notebooks/train_xgb_ray.ipynb
+            base_parameters:
+              data_size: "medium_large"
+              node_type: "D16sv5x4"
+              run_mode: "full"
+              num_workers: "4"
+              cpus_per_worker: "14"
+              warehouse_id: "148ccb90800933a1"
+              table_name: "imbalanced_30m"
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+            source: WORKSPACE
+          new_cluster:
+            spark_version: "17.3.x-cpu-ml-scala2.13"
+            node_type_id: "Standard_D16s_v5"
+            num_workers: 4
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.databricks.delta.optimizeWrite.enabled: "true"
+              spark.task.cpus: "1"
+              spark.executorEnv.OMP_NUM_THREADS: "15"
+            custom_tags:
+              ResourceClass: MultiNode
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1
+          libraries:
+            - pypi:
+                package: psutil
+      tags:
+        project: scaling_xgb
+        environment: ${var.env}
+        test_type: data_scaling
+        data_size: 30m
+        num_workers: "4"
+        node_type: D16sv5
+
+    perf_ray_30m_8w_d16:
+      name: "[${var.env}] Perf: Ray 30M 8W D16"
+      description: "Ray distributed - 30M rows, 8 workers on D16s_v5"
+      tasks:
+        - task_key: train_ray
+          notebook_task:
+            notebook_path: ./notebooks/train_xgb_ray.ipynb
+            base_parameters:
+              data_size: "medium_large"
+              node_type: "D16sv5x8"
+              run_mode: "full"
+              num_workers: "8"
+              cpus_per_worker: "14"
+              warehouse_id: "148ccb90800933a1"
+              table_name: "imbalanced_30m"
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+            source: WORKSPACE
+          new_cluster:
+            spark_version: "17.3.x-cpu-ml-scala2.13"
+            node_type_id: "Standard_D16s_v5"
+            num_workers: 8
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.databricks.delta.optimizeWrite.enabled: "true"
+              spark.task.cpus: "1"
+              spark.executorEnv.OMP_NUM_THREADS: "15"
+            custom_tags:
+              ResourceClass: MultiNode
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1
+          libraries:
+            - pypi:
+                package: psutil
+      tags:
+        project: scaling_xgb
+        environment: ${var.env}
+        test_type: data_scaling
+        data_size: 30m
+        num_workers: "8"
+        node_type: D16sv5
 
     # ---------------------------------------------------------------------------
     # LEGACY / DEBUG JOBS
