@@ -820,10 +820,11 @@ resources:
         node_type: NC4asT4v3
         gpu: "true"
 
-    # GPU Multi-GPU: NC16as_T4_v3 (4x T4, 16 cores, 110GB RAM)
+    # GPU Single-GPU on multi-GPU node: NC16as_T4_v3 (4x T4 available, 16 cores, 110GB RAM)
+    # NOTE: Currently uses single GPU via gpu_hist. Multi-GPU via Ray is planned for a future iteration.
     train_xgb_gpu_nc16_t4:
       name: "[${var.env}] Train XGBoost GPU (NC16as_T4_v3)"
-      description: "GPU XGBoost on 4x T4 GPUs - 16 cores, 110GB RAM, 4x T4 64GB total"
+      description: "GPU XGBoost on NC16as_T4_v3 - 16 cores, 110GB RAM, 4x T4 available but using single GPU (multi-GPU via Ray planned)"
 
       parameters:
         - name: data_size
