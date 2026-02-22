@@ -1,0 +1,94 @@
+# Ray Plasma / Object Store Tuning Track Configuration
+# ==============================================
+# Experiments: Tuning Ray Plasma object store for large-scale distributed XGBoost
+# Goal: Determine if object store config matters at different data scales
+
+track: ray-plasma-tuning
+description: "Ray Plasma/object store memory tuning — does it matter for XGBoost at scale?"
+
+# Target environment
+platform:
+  runtime: "17.3.x-cpu-ml-scala2.13"
+  data_security_mode: SINGLE_USER
+  spark_conf:
+    spark.databricks.delta.optimizeWrite.enabled: "true"
+    spark.task.cpus: "1"
+    spark.executorEnv.OMP_NUM_THREADS: "15"
+  libraries:
+    - psutil
+
+# Experiment matrix
+experiments:
+  # Plasma sweep at 10M (4 workers, D16)
+  sweep_10m_d16:
+    data_size: medium
+    table: imbalanced_10m
+    workers: 4
+    node_type: Standard_D16s_v5
+    cpus_per_worker: 14
+    results:
+      - { obj_store_gb: "default (~19)", heap_gb: default, allow_slow: false, train_time: "80s", cpu_avg: "71%" }
+      - { obj_store_gb: 8, heap_gb: default, allow_slow: false, train_time: "80s", cpu_avg: "70%" }
+      - { obj_store_gb: 12, heap_gb: default, allow_slow: false, train_time: "80s", cpu_avg: "70%" }
+      - { obj_store_gb: 24, heap_gb: default, allow_slow: true, train_time: "80s", cpu_avg: "70%" }
+      - { obj_store_gb: 24, heap_gb: 20, allow_slow: true, train_time: "80s", cpu_avg: "70%" }
+
+  # Plasma sweep at 10M (4 workers, E16)
+  sweep_10m_e16:
+    data_size: medium
+    table: imbalanced_10m
+    workers: 4
+    node_type: Standard_E16s_v5
+    cpus_per_worker: 14
+    results:
+      - { obj_store_gb: 40, heap_gb: default, allow_slow: true, train_time: "80s", cpu_avg: "72%" }
+
+  # Planned: Plasma sweep at 100M (where it might actually matter)
+  sweep_100m:
+    data_size: large
+    table: imbalanced_100m
+    pending:
+      - { workers: 8, node: D16sv5, obj_store_gb: [8, 16, 24, 32], notes: "Does object store matter when data >> memory?" }
+      - { workers: 8, node: E16sv5, obj_store_gb: [16, 32, 48, 64], notes: "Memory-optimised nodes for baseline" }
+      - { workers: 4, node: E32sv5, obj_store_gb: [32, 64, 96], notes: "Fewer fat nodes vs many thin nodes" }
+
+# Plasma parameters reference
+plasma_params:
+  obj_store_mem_gb:
+    description: "Ray object store memory per worker (0 = default ~30% of RAM)"
+    default: 0
+    tuning_range: [4, 8, 12, 16, 24, 32, 40, 48, 64]
+  heap_mem_gb:
+    description: "Ray heap memory per worker (0 = default)"
+    default: 0
+    tuning_range: [0, 10, 20, 30, 40, 60]
+  allow_slow_storage:
+    description: "Allow object store spilling to disk (bypass /dev/shm limit)"
+    default: false
+    notes: "Enable when obj_store_mem_gb > /dev/shm size (typically 50% of RAM)"
+
+# Key finding (see LEARNINGS.md L3)
+conclusion_10m: >
+  At 10M x 250 features, Plasma config has negligible impact.
+  Default Ray allocation (~30% of RAM) is sufficient.
+  The OMP_NUM_THREADS fix dominates all other tuning.
+  Revisit at 100M+ where data may exceed available memory.
+
+# Notebook: train_xgb_ray_plasma.ipynb
+# This notebook has Databricks widget params for all Plasma settings
+notebook: notebooks/train_xgb_ray_plasma.ipynb
+widget_params:
+  - data_size
+  - node_type
+  - num_workers
+  - cpus_per_worker
+  - obj_store_mem_gb
+  - heap_mem_gb
+  - allow_slow_storage
+  - warehouse_id
+
+# MLflow
+mlflow:
+  experiment_path: "/Users/brian.law@databricks.com/xgb_scaling_benchmark"
+  tags:
+    training_mode: ray_distributed_plasma

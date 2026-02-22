@@ -1,0 +1,93 @@
+# Ray Distributed Scaling Track Configuration
+# ==============================================
+# Experiments: XGBoost via Ray DataParallelTrainer on Spark
+# Goal: Measure distributed scaling efficiency across worker counts and node types
+
+track: ray-scaling
+description: "Distributed XGBoost via Ray on Spark — worker scaling, data scaling, OMP fix validation"
+
+# Target environment
+platform:
+  runtime: "17.3.x-cpu-ml-scala2.13"
+  data_security_mode: SINGLE_USER
+  spark_conf:
+    spark.databricks.delta.optimizeWrite.enabled: "true"
+    spark.task.cpus: "1"
+    # CRITICAL: Without this, XGBoost uses only 1 thread per worker (see LEARNINGS.md L1)
+    spark.executorEnv.OMP_NUM_THREADS: "15"
+  libraries:
+    - psutil  # MLflow system metrics
+
+# Experiment matrix
+experiments:
+  # Phase 1: Worker scaling (1M data, D8 nodes)
+  phase_1_worker_scaling:
+    data_size: small  # 1M rows, 100 features
+    table: imbalanced_1m
+    node_type: Standard_D8s_v5
+    cpus_per_worker: 6
+    worker_counts: [2, 4, 8]
+    completed:
+      - { workers: 2, train_time: "45s", total_time: "101s" }
+      - { workers: 4, train_time: "37s", total_time: "92s" }
+      - { workers: 8, train_time: "38s", total_time: "96s", notes: "Diminishing returns — dataset too small" }
+
+  # Phase 2: Larger nodes (1M data, D16 nodes)
+  phase_2_node_upgrade:
+    data_size: small
+    table: imbalanced_1m
+    node_type: Standard_D16s_v5
+    cpus_per_worker: 14
+    worker_counts: [4]
+    completed: []
+    pending:
+      - { workers: 4, notes: "Compare D16 vs D8 at 1M — is more memory/CPU per node worth it?" }
+
+  # Phase 3: Data scaling (10M data)
+  phase_3_data_scaling:
+    data_size: medium  # 10M rows, 250 features
+    table: imbalanced_10m
+    cpus_per_worker: 14
+    experiments:
+      - { workers: 4, node: D16sv5, train_time: "80s", total_time: "128s", omp_fixed: true }
+      - { workers: 4, node: E16sv5, train_time: "79s", total_time: "126s", omp_fixed: true }
+      - { workers: 2, node: D16sv5, train_time: "510s", total_time: "560s", omp_fixed: false, notes: "Pre-OMP fix" }
+      - { workers: 2, node: E16sv5, train_time: "511s", total_time: "558s", omp_fixed: false, notes: "Pre-OMP fix" }
+
+  # Phase 4: Large-scale (planned)
+  phase_4_large_scale:
+    data_sizes: [medium_large, large]  # 30M, 100M
+    pending:
+      - { data: medium_large, workers: 4, node: D16sv5 }
+      - { data: medium_large, workers: 8, node: D16sv5 }
+      - { data: large, workers: 8, node: D16sv5 }
+      - { data: large, workers: 8, node: E16sv5, notes: "Memory-optimised nodes for 100M" }
+
+# OMP Fix Configuration (see LEARNINGS.md L1)
+omp_fix:
+  strategy: "spark_conf + runtime_env + worker_level"
+  target_threads: 15  # vCPUs - 1
+  spark_conf_key: "spark.executorEnv.OMP_NUM_THREADS"
+  runtime_env_key: "OMP_NUM_THREADS"
+
+# Ray configuration
+ray:
+  trainer: DataParallelTrainer
+  backend: XGBoostConfig
+  warehouse_id: "148ccb90800933a1"  # SQL Warehouse for Ray Data reads
+
+# XGBoost parameters
+xgb_params:
+  objective: "binary:logistic"
+  eval_metric: ["aucpr", "logloss"]
+  tree_method: "hist"
+  max_depth: 8
+  eta: 0.1
+  n_estimators: 100
+  nthread: 14  # = cpus_per_worker, capped by OMP_NUM_THREADS
+
+# MLflow
+mlflow:
+  experiment_path: "/Users/brian.law@databricks.com/xgb_scaling_benchmark"
+  tags:
+    training_mode: ray_distributed

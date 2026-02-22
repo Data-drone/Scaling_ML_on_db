@@ -1,0 +1,64 @@
+# Single-Node Scaling Track Configuration
+# ==============================================
+# Experiments: XGBoost on a single Spark driver node
+# Goal: Establish baselines and find vertical scaling limits
+
+track: single-node-scaling
+description: "Single-node XGBoost baselines across VM sizes and data scales"
+
+# Target environment
+platform:
+  runtime: "17.3.x-cpu-ml-scala2.13"
+  data_security_mode: SINGLE_USER
+  spark_conf:
+    spark.databricks.cluster.profile: singleNode
+    spark.master: "local[*, 4]"
+  libraries:
+    - psutil  # MLflow system metrics
+
+# Experiment matrix
+experiments:
+  # Size x Node Type grid
+  matrix:
+    data_sizes: [tiny, small, medium]
+    node_types:
+      - id: Standard_D16s_v5
+        alias: D16sv5
+        vcpus: 16
+        memory_gb: 64
+      - id: Standard_E16s_v5
+        alias: E16sv5
+        vcpus: 16
+        memory_gb: 128
+      - id: Standard_E32s_v5
+        alias: E32sv5
+        vcpus: 32
+        memory_gb: 256
+
+  # Completed experiments
+  completed:
+    - { data: small, node: D16sv5, train_time: "5-6s", total_time: "21-25s", auc_pr: 0.9966 }
+    - { data: medium, node: E16sv5, train_time: "128s", total_time: "186s", auc_pr: 1.0 }
+    - { data: medium, node: E32sv5, train_time: "76s", total_time: "115s", auc_pr: 1.0 }
+
+  # Pending experiments
+  pending:
+    - { data: medium, node: D16sv5, notes: "Compare D16 vs E16 at 10M to isolate memory effect" }
+    - { data: medium_large, node: E32sv5, notes: "30M rows — does E32 handle it without OOM?" }
+    - { data: large, node: E32sv5, notes: "100M rows — expected to OOM, establishes single-node ceiling" }
+
+# Key parameters
+xgb_params:
+  objective: "binary:logistic"
+  eval_metric: ["aucpr", "logloss"]
+  tree_method: "hist"
+  max_depth: 8
+  eta: 0.1
+  n_estimators: 100
+  # nthread: auto (uses all available cores on single node)
+
+# MLflow
+mlflow:
+  experiment_path: "/Users/brian.law@databricks.com/xgb_scaling_benchmark"
+  tags:
+    training_mode: single_node

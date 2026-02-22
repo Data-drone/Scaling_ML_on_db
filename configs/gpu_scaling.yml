@@ -1,0 +1,93 @@
+# GPU Scaling Track Configuration
+# ==============================================
+# Experiments: GPU-accelerated XGBoost on Databricks
+# Goal: Compare GPU vs CPU scaling, find GPU memory limits
+# Status: PLANNED — no experiments run yet
+
+track: gpu-scaling
+description: "GPU-accelerated XGBoost — single-GPU and multi-GPU via Ray"
+
+# Target environment
+platform:
+  runtime: "17.3.x-gpu-ml-scala2.13"  # GPU ML Runtime
+  data_security_mode: SINGLE_USER
+  spark_conf:
+    spark.databricks.cluster.profile: singleNode  # For single-GPU jobs
+    spark.master: "local[*, 4]"
+  libraries:
+    - psutil
+
+# Azure GPU VM Options
+node_types:
+  # Single GPU VMs
+  - id: Standard_NC6s_v3
+    alias: NC6sv3
+    vcpus: 6
+    memory_gb: 112
+    gpus: 1
+    gpu_type: V100
+    gpu_memory_gb: 16
+  - id: Standard_NC12s_v3
+    alias: NC12sv3
+    vcpus: 12
+    memory_gb: 224
+    gpus: 2
+    gpu_type: V100
+    gpu_memory_gb: 32
+  # T4 VMs (cheaper)
+  - id: Standard_NC4as_T4_v3
+    alias: NC4asT4v3
+    vcpus: 4
+    memory_gb: 28
+    gpus: 1
+    gpu_type: T4
+    gpu_memory_gb: 16
+  - id: Standard_NC16as_T4_v3
+    alias: NC16asT4v3
+    vcpus: 16
+    memory_gb: 110
+    gpus: 4
+    gpu_type: T4
+    gpu_memory_gb: 64
+
+# Planned experiments
+experiments:
+  # Phase 1: Single-GPU baselines
+  phase_1_single_gpu:
+    description: "Single GPU XGBoost with tree_method=gpu_hist"
+    pending:
+      - { data: small, node: NC6sv3, notes: "1M baseline — expect fast, ~2-3s train" }
+      - { data: medium, node: NC6sv3, notes: "10M — does 16GB V100 fit the data?" }
+      - { data: medium, node: NC4asT4v3, notes: "10M on cheaper T4 — cost comparison" }
+      - { data: medium_large, node: NC12sv3, notes: "30M — may need multi-GPU" }
+
+  # Phase 2: Multi-GPU via Ray
+  phase_2_multi_gpu_ray:
+    description: "Multi-GPU distributed XGBoost via Ray DataParallelTrainer"
+    pending:
+      - { data: medium, node: NC16asT4v3, workers: 4, notes: "4x T4 GPUs via Ray" }
+      - { data: large, node: NC12sv3, workers: 4, notes: "4x2 V100s via Ray — 100M rows" }
+
+# XGBoost GPU parameters
+xgb_params:
+  objective: "binary:logistic"
+  eval_metric: ["aucpr", "logloss"]
+  tree_method: "gpu_hist"  # GPU-accelerated histogram
+  max_depth: 8
+  eta: 0.1
+  n_estimators: 100
+  gpu_id: 0  # For single-GPU; Ray handles multi-GPU assignment
+
+# Key questions to answer
+questions:
+  - "At what data size does GPU outperform CPU (16-core D16)?"
+  - "Is T4 cost-effective vs V100 for XGBoost?"
+  - "Does multi-GPU Ray scaling work the same as multi-CPU?"
+  - "Does the OMP_NUM_THREADS issue affect GPU training?"
+  - "What is the GPU memory limit for XGBoost DMatrix?"
+
+# MLflow
+mlflow:
+  experiment_path: "/Users/brian.law@databricks.com/xgb_scaling_benchmark"
+  tags:
+    training_mode: gpu
