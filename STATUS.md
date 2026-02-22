@@ -103,3 +103,23 @@ spark_conf:
 1. **Pre-OMP-fix data contamination:** Some early runs in MLflow don't have the OMP fix. Filter by `params.omp_fix_strategy != ""` to exclude them.
 2. **SQL Warehouse cold start:** First Ray Data read after warehouse idle timeout adds 30-60s. Subsequent reads are fast.
 3. **Spot preemption on long runs:** E-series VMs get preempted more frequently. Use D-series for runs > 20 min.
+
+---
+
+## Session Log
+
+### 2026-02-22: Port OMP Fix + Diagnostics from Plasma Notebook
+
+**Notebook changes (`notebooks/train_xgb_ray.ipynb`):**
+1. OMP_NUM_THREADS 3-layer fix (Layer 1: spark_conf, Layer 2: runtime_env, Layer 3: env+ctypes before import)
+2. OmpDiagnosticsCollector zero-CPU actor for worker OMP state reporting
+3. DataParallelTrainer with custom xgb_train_fn (replaces XGBoostTrainer)
+4. WorkerMetricsMonitor actors for per-worker system metrics
+5. Environment validation gate (src.validate_env)
+6. Shared config presets from src.config (replaces duplicated SIZE_PRESETS)
+7. medium_large added to widget dropdown
+8. try/finally for Ray cluster shutdown on failure
+
+**databricks.yml changes:**
+- spark.executorEnv.OMP_NUM_THREADS added to ALL Ray jobs (D8=7, D16/E16=15)
+- Phase 4 jobs: perf_ray_10m_2w_d16_omp, perf_ray_30m_4w_d16, perf_ray_30m_8w_d16
