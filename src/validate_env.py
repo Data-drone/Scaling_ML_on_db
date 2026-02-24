@@ -96,22 +96,77 @@ def _check_dbr_version(report: EnvironmentReport, min_version: str = "17.3"):
 
 
 def _check_ml_runtime(report: EnvironmentReport, require_gpu: bool = False):
-    """Check that ML Runtime is being used."""
+    """Check that ML Runtime is being used.
+
+    Checks multiple sources since DATABRICKS_RUNTIME_VERSION env var is
+    often abbreviated (e.g., '17.3') even when using ML runtime.
+    We check:
+      1. spark.databricks.clusterUsageTags.sparkVersion (full string)
+      2. spark.databricks.clusterUsageTags.effectiveSparkVersion
+      3. DATABRICKS_RUNTIME_VERSION env var
+      4. Presence of pre-installed ML libraries (mlflow, xgboost) as fallback
+    """
     dbr = os.environ.get("DATABRICKS_RUNTIME_VERSION", "")
     if not dbr:
         report.add("ML Runtime", False, "Cannot verify — not on Databricks", "warning")
         return
 
+    # Collect version strings from multiple Spark config sources
+    spark_versions = []
+    try:
+        from pyspark.sql import SparkSession
+        spark = SparkSession.getActiveSession()
+        if spark:
+            for key in [
+                "spark.databricks.clusterUsageTags.sparkVersion",
+                "spark.databricks.clusterUsageTags.effectiveSparkVersion",
+            ]:
+                try:
+                    v = spark.conf.get(key, "")
+                    if v:
+                        spark_versions.append(v)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # Check all available version strings for "ml" indicator
+    all_versions = spark_versions + [dbr]
+    full_version = spark_versions[0] if spark_versions else dbr
+    has_ml = any("ml" in v.lower() for v in all_versions)
+    has_gpu_ml = any("gpu-ml" in v.lower() for v in all_versions)
+
+    # Fallback: if version strings don't contain "ml" (common with abbreviated env var),
+    # check if ML-specific libraries are pre-installed (indicates ML runtime)
+    if not has_ml:
+        ml_libs_found = 0
+        for lib in ["mlflow", "xgboost", "sklearn"]:
+            try:
+                importlib.import_module(lib)
+                ml_libs_found += 1
+            except ImportError:
+                pass
+        if ml_libs_found >= 2:
+            has_ml = True
+            full_version = f"{dbr} (ML detected via pre-installed libraries)"
+
     if require_gpu:
-        if "gpu-ml" in dbr:
-            report.add("ML Runtime", True, f"GPU ML Runtime detected: {dbr}")
+        if has_gpu_ml:
+            report.add("ML Runtime", True, f"GPU ML Runtime detected: {full_version}")
+        elif has_ml:
+            # ML runtime but not GPU — might still work if GPU is available
+            report.add("ML Runtime", False,
+                        f"ML Runtime detected ({full_version}) but GPU ML runtime preferred. "
+                        "Use '17.3.x-gpu-ml-scala2.13'", "warning")
         else:
-            report.add("ML Runtime", False, f"GPU ML Runtime required but got: {dbr}. Use '17.3.x-gpu-ml-scala2.13'")
+            report.add("ML Runtime", False,
+                        f"GPU ML Runtime required but got: {full_version}. Use '17.3.x-gpu-ml-scala2.13'")
     else:
-        if "ml" in dbr:
-            report.add("ML Runtime", True, f"ML Runtime detected: {dbr}")
+        if has_ml:
+            report.add("ML Runtime", True, f"ML Runtime detected: {full_version}")
         else:
-            report.add("ML Runtime", False, f"ML Runtime required but got: {dbr}. Use '17.3.x-cpu-ml-scala2.13'")
+            report.add("ML Runtime", False,
+                        f"ML Runtime required but got: {full_version}. Use '17.3.x-cpu-ml-scala2.13'")
 
 
 def _check_omp_config(report: EnvironmentReport, track: str):
