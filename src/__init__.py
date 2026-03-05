@@ -1,1 +1,1 @@
-# Scaling XGBoost on Databricks — shared utilities
+"""Scaling XGBoost on Databricks - shared utilities."""
