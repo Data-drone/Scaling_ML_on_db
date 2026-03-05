@@ -307,7 +307,50 @@ resources:
         data_size: 1m
         node_type: D16sv5
 
-    # ---------------------------------------------------------------------------
+    # Single-node 10M rows on E16 (E16 baseline)
+    perf_single_10m_e16:
+      name: "[${var.env}] Perf: Single 10M E16"
+      description: "Baseline - Single node XGBoost with 10M rows on E16s_v5"
+
+      tasks:
+        - task_key: train
+          notebook_task:
+            notebook_path: ./notebooks/train_xgb_single.ipynb
+            base_parameters:
+              data_size: "medium"
+              node_type: "E16sv5"
+              run_mode: "full"
+              table_name: "imbalanced_10m"
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+            source: WORKSPACE
+
+          new_cluster:
+            spark_version: "17.3.x-cpu-ml-scala2.13"
+            node_type_id: "Standard_E16s_v5"
+            num_workers: 0
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.databricks.cluster.profile: singleNode
+              spark.master: "local[*, 4]"
+            custom_tags:
+              ResourceClass: SingleNode
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1
+
+          libraries:
+            - pypi:
+                package: psutil
+
+      tags:
+        project: scaling_xgb
+        environment: ${var.env}
+        test_type: baseline
+        data_size: 10m
+        node_type: E16sv5
+
+        # ---------------------------------------------------------------------------
     # PHASE 1: WORKER SCALING (1M data, D8 nodes)
     # ---------------------------------------------------------------------------
     
