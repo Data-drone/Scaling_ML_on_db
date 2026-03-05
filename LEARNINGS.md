@@ -224,6 +224,89 @@ Databricks REST API (`/api/2.0/clusters/get-output`, DBFS driver logs) only retu
 
 ---
 
+### L13: `src/__init__.py` starting with `#` comment triggers NotebookImportException
+
+**Severity:** Critical — blocks ALL notebook imports of `src` module
+**Track:** All (Single-Node, Ray, GPU)
+**Date discovered:** 2026-02-22 smoke test failures
+**Status:** RESOLVED
+
+**Problem:**
+When `src/__init__.py` is deployed via DAB to the Databricks workspace and starts with a `#` comment line (e.g., `# Scaling XGBoost on Databricks — shared utilities`), Databricks DBR 17.3's workspace import machinery misidentifies it as a notebook file. Any `from src.xxx import yyy` then fails with:
+
+```
+NotebookImportException: Unable to import module `src`.
+The following file appears to be a notebook:
+/Workspace/Users/.../src/__init__.py
+Importing notebooks directly is not supported.
+```
+
+**Fix:** Use a triple-quoted docstring instead of a comment:
+```python
+# BAD — triggers NotebookImportException
+# Scaling XGBoost on Databricks — shared utilities
+
+# GOOD — Databricks recognises this as a plain Python file
+"""Scaling XGBoost on Databricks - shared utilities."""
+```
+
+**Root cause:** Databricks uses heuristics to distinguish notebooks from plain `.py` files. A file starting with `#` followed by text looks like a `# Databricks notebook source` header line. Using a docstring avoids this ambiguity.
+
+---
+
+### L14: Databricks Jobs API requires task-level run_id for error details
+
+**Severity:** High — without this, all you get is "Workload failed, see run output for details"
+**Track:** All (CI/CD, agent automation)
+**Date discovered:** 2026-02-22
+**Status:** Documented
+
+**Problem:**
+`GET /api/2.1/jobs/runs/get` only returns a generic error message. The actual stack trace requires a separate `GET /api/2.1/jobs/runs/get-output` call with the **task-level** `run_id` (not the parent job run_id).
+
+**The two-step pattern:**
+```bash
+# Step 1: Get task-level run IDs
+curl -s "${HOST}/api/2.1/jobs/runs/get?run_id=${PARENT_RUN_ID}" \
+  -H "Authorization: Bearer ${TOKEN}" | jq '.tasks[].run_id'
+
+# Step 2: Get actual error for each task
+curl -s "${HOST}/api/2.1/jobs/runs/get-output?run_id=${TASK_RUN_ID}" \
+  -H "Authorization: Bearer ${TOKEN}" | jq '{error, error_trace}'
+```
+
+**Key fields returned by get-output:**
+- `error`: The error message string (e.g., `NotebookImportException: ...`)
+- `error_trace`: Full Python stack trace
+- `notebook_output.result`: The notebook's `dbutils.notebook.exit()` value (on success)
+
+**Gotcha:** Calling `get-output` with a multi-task parent run_id returns `INVALID_PARAMETER_VALUE`. You MUST use the task-level run_id found in `tasks[].run_id`.
+
+**If `error_trace` is empty:** Check cluster events API (`GET /api/2.0/clusters/events?cluster_id=...`) for infrastructure failures (OOM, spot preemption, driver crash).
+
+---
+
+### L15: Local repo vs workspace code drift is a silent killer
+
+**Track:** All (CI/CD)
+**Date discovered:** 2026-02-22
+**Status:** Ongoing risk
+
+When multiple agents (Codex, Claude, manual edits) push code to the workspace independently, the deployed code can diverge from the local git repo. DAB `databricks bundle deploy` syncs local → workspace, but direct workspace API writes (`workspace/import`) bypass the bundle entirely.
+
+**Symptoms:**
+- Notebook imports modules that don't exist in the local repo
+- Config APIs have different function signatures
+- Tests pass locally but notebooks fail on Databricks
+
+**Best practices:**
+1. Always deploy via `databricks bundle deploy` (single source of truth)
+2. Use `workspace/list` + `workspace/export` APIs to verify deployed state
+3. Add a version hash check in notebook cell 1 to detect drift
+4. Never edit workspace files directly — always commit to git first
+
+---
+
 ## Open Questions / Future Learnings
 
 ### Q1: Does Plasma tuning matter at 100M+ rows?
