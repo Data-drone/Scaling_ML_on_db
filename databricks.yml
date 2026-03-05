@@ -815,3 +815,248 @@ resources:
       tags:
         project: scaling_xgb
         environment: ${var.env}
+
+# =========================================================================
+    # GPU SCALING JOBS (NCT4 VMs)
+    # =========================================================================
+
+    # ---------------------------------------------------------------------------
+    # GPU SINGLE-NODE JOBS
+    # ---------------------------------------------------------------------------
+
+    # GPU Single-Node: NC4as_T4_v3 (1x T4, 4 cores, 28GB RAM)
+    train_xgb_gpu_nc4_t4:
+      name: "[${var.env}] Train XGBoost GPU (NC4as_T4_v3)"
+      description: "GPU XGBoost on single T4 GPU - 4 cores, 28GB RAM, 1x T4 16GB"
+
+      parameters:
+        - name: data_size
+          default: small
+        - name: node_type
+          default: NC4asT4v3
+        - name: gpu_id
+          default: "0"
+        - name: run_mode
+          default: full
+        - name: table_name
+          default: ""
+
+      tasks:
+        - task_key: train
+          notebook_task:
+            notebook_path: ./notebooks/train_xgb_gpu.ipynb
+            base_parameters:
+              data_size: "{{job.parameters.data_size}}"
+              node_type: "{{job.parameters.node_type}}"
+              gpu_id: "{{job.parameters.gpu_id}}"
+              run_mode: "{{job.parameters.run_mode}}"
+              table_name: "{{job.parameters.table_name}}"
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+            source: WORKSPACE
+
+          new_cluster:
+            spark_version: "17.3.x-gpu-ml-scala2.13"
+            node_type_id: "Standard_NC4as_T4_v3"
+            num_workers: 0
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.databricks.cluster.profile: singleNode
+              spark.master: "local[*, 4]"
+            custom_tags:
+              ResourceClass: SingleNode
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1
+
+          libraries:
+            - pypi:
+                package: psutil
+
+      tags:
+        project: scaling_xgb
+        environment: ${var.env}
+        node_type: NC4asT4v3
+        gpu: "true"
+
+    # GPU Single-GPU on multi-GPU node: NC16as_T4_v3 (4x T4 available, 16 cores, 110GB RAM)
+    # NOTE: Currently uses single GPU via gpu_hist. Multi-GPU via Ray is planned for a future iteration.
+    train_xgb_gpu_nc16_t4:
+      name: "[${var.env}] Train XGBoost GPU (NC16as_T4_v3)"
+      description: "GPU XGBoost on NC16as_T4_v3 - 16 cores, 110GB RAM, 4x T4 available but using single GPU (multi-GPU via Ray planned)"
+
+      parameters:
+        - name: data_size
+          default: medium
+        - name: node_type
+          default: NC16asT4v3
+        - name: gpu_id
+          default: "0"
+        - name: run_mode
+          default: full
+        - name: table_name
+          default: ""
+
+      tasks:
+        - task_key: train
+          notebook_task:
+            notebook_path: ./notebooks/train_xgb_gpu.ipynb
+            base_parameters:
+              data_size: "{{job.parameters.data_size}}"
+              node_type: "{{job.parameters.node_type}}"
+              gpu_id: "{{job.parameters.gpu_id}}"
+              run_mode: "{{job.parameters.run_mode}}"
+              table_name: "{{job.parameters.table_name}}"
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+            source: WORKSPACE
+
+          new_cluster:
+            spark_version: "17.3.x-gpu-ml-scala2.13"
+            node_type_id: "Standard_NC16as_T4_v3"
+            num_workers: 0
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.databricks.cluster.profile: singleNode
+              spark.master: "local[*, 4]"
+            custom_tags:
+              ResourceClass: SingleNode
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1
+
+          libraries:
+            - pypi:
+                package: psutil
+
+      tags:
+        project: scaling_xgb
+        environment: ${var.env}
+        node_type: NC16asT4v3
+        gpu: "true"
+
+    # ---------------------------------------------------------------------------
+    # GPU PERFORMANCE TEST JOBS
+    # ---------------------------------------------------------------------------
+
+    # GPU 1M baseline on single T4
+    perf_gpu_1m_nc4_t4:
+      name: "[${var.env}] Perf: GPU 1M NC4as_T4"
+      description: "GPU baseline - 1M rows on single T4 (NC4as_T4_v3)"
+
+      tasks:
+        - task_key: train
+          notebook_task:
+            notebook_path: ./notebooks/train_xgb_gpu.ipynb
+            base_parameters:
+              data_size: "small"
+              node_type: "NC4asT4v3"
+              gpu_id: "0"
+              run_mode: "full"
+              table_name: "imbalanced_1m"
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+            source: WORKSPACE
+
+          new_cluster:
+            spark_version: "17.3.x-gpu-ml-scala2.13"
+            node_type_id: "Standard_NC4as_T4_v3"
+            num_workers: 0
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.databricks.cluster.profile: singleNode
+              spark.master: "local[*, 4]"
+            custom_tags:
+              ResourceClass: SingleNode
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1
+
+          libraries:
+            - pypi:
+                package: psutil
+
+      tags:
+        project: scaling_xgb
+        environment: ${var.env}
+        test_type: baseline
+        data_size: 1m
+        node_type: NC4asT4v3
+        gpu: "true"
+
+    # GPU 10M on single T4
+    perf_gpu_10m_nc4_t4:
+      name: "[${var.env}] Perf: GPU 10M NC4as_T4"
+      description: "GPU scaling test - 10M rows on single T4 (NC4as_T4_v3)"
+
+      tasks:
+        - task_key: train
+          notebook_task:
+            notebook_path: ./notebooks/train_xgb_gpu.ipynb
+            base_parameters:
+              data_size: "medium"
+              node_type: "NC4asT4v3"
+              gpu_id: "0"
+              run_mode: "full"
+              table_name: "imbalanced_10m"
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+            source: WORKSPACE
+
+          new_cluster:
+            spark_version: "17.3.x-gpu-ml-scala2.13"
+            node_type_id: "Standard_NC4as_T4_v3"
+            num_workers: 0
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.databricks.cluster.profile: singleNode
+              spark.master: "local[*, 4]"
+            custom_tags:
+              ResourceClass: SingleNode
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1
+
+          libraries:
+            - pypi:
+                package: psutil
+
+      tags:
+        project: scaling_xgb
+        environment: ${var.env}
+        test_type: data_scaling
+        data_size: 10m
+        node_type: NC4asT4v3
+        gpu: "true"
+
+    # ---------------------------------------------------------------------------
+    # LEGACY / DEBUG JOBS
+    # ---------------------------------------------------------------------------
+
+    # Debug job for Ray setup diagnosis
+    debug_ray_setup:
+      name: "[${var.env}] Debug Ray Setup"
+      description: "Diagnostic notebook to test Ray on Spark"
+
+      tasks:
+        - task_key: debug
+          notebook_task:
+            notebook_path: ./notebooks/debug_ray_setup.ipynb
+            source: WORKSPACE
+          
+          new_cluster:
+            spark_version: "17.3.x-cpu-ml-scala2.13"
+            node_type_id: "Standard_D8s_v5"
+            num_workers: 2
+            data_security_mode: SINGLE_USER
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1
+          
+          libraries:
+            - pypi:
+                package: psutil
+
+      tags:
+        project: scaling_xgb
+        environment: ${var.env}
