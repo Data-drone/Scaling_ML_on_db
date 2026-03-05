@@ -19,22 +19,135 @@ targets:
     # Default target for local development
     default: true
     mode: development
+    compute_id: "0305-133022-liv08s67"
     workspace:
       host: https://adb-984752964297111.11.azuredatabricks.net
     variables:
       env: dev
       catalog: brian_gen_ai
       schema: xgb_scaling
+    resources:
+      jobs:
+        train_xgb_gpu_nc4_t4:
+          tasks:
+            - task_key: train
+              new_cluster:
+                spark_version: "17.3.x-gpu-ml-scala2.13"
+                node_type_id: "Standard_NC4as_T4_v3"
+                num_workers: 0
+                data_security_mode: SINGLE_USER
+                spark_conf:
+                  spark.databricks.cluster.profile: singleNode
+                  spark.master: "local[*, 4]"
+                custom_tags:
+                  ResourceClass: SingleNode
+                azure_attributes:
+                  availability: SPOT_WITH_FALLBACK_AZURE
+                  spot_bid_max_price: -1
+        train_xgb_gpu_nc16_t4:
+          tasks:
+            - task_key: train
+              new_cluster:
+                spark_version: "17.3.x-gpu-ml-scala2.13"
+                node_type_id: "Standard_NC16as_T4_v3"
+                num_workers: 0
+                data_security_mode: SINGLE_USER
+                spark_conf:
+                  spark.databricks.cluster.profile: singleNode
+                  spark.master: "local[*, 4]"
+                custom_tags:
+                  ResourceClass: SingleNode
+                azure_attributes:
+                  availability: SPOT_WITH_FALLBACK_AZURE
+                  spot_bid_max_price: -1
+        perf_gpu_1m_nc4_t4:
+          tasks:
+            - task_key: train
+              new_cluster:
+                spark_version: "17.3.x-gpu-ml-scala2.13"
+                node_type_id: "Standard_NC4as_T4_v3"
+                num_workers: 0
+                data_security_mode: SINGLE_USER
+                spark_conf:
+                  spark.databricks.cluster.profile: singleNode
+                  spark.master: "local[*, 4]"
+                custom_tags:
+                  ResourceClass: SingleNode
+                azure_attributes:
+                  availability: SPOT_WITH_FALLBACK_AZURE
+                  spot_bid_max_price: -1
+        perf_gpu_10m_nc4_t4:
+          tasks:
+            - task_key: train
+              new_cluster:
+                spark_version: "17.3.x-gpu-ml-scala2.13"
+                node_type_id: "Standard_NC4as_T4_v3"
+                num_workers: 0
+                data_security_mode: SINGLE_USER
+                spark_conf:
+                  spark.databricks.cluster.profile: singleNode
+                  spark.master: "local[*, 4]"
+                custom_tags:
+                  ResourceClass: SingleNode
+                azure_attributes:
+                  availability: SPOT_WITH_FALLBACK_AZURE
+                  spot_bid_max_price: -1
 
   prod:
     mode: production
     workspace:
-      # TODO: Configure prod workspace
-      # host: https://your-prod-workspace.cloud.databricks.com
+      host: https://adb-984752964297111.11.azuredatabricks.net
+      root_path: /Workspace/Users/brian.law@databricks.com/.bundle/${bundle.name}/${bundle.target}
     variables:
       env: prod
       catalog: your_prod_catalog  # TODO: Set prod catalog
       schema: scaling_xgb_prod    # TODO: Set prod schema
+    resources:
+      jobs:
+        train_xgb_single_d16:
+          name: "[${var.env}] Train XGBoost Single (D16s_v5)"
+          description: "Train XGBoost on single node - 16 cores, 64GB RAM"
+          parameters:
+            - name: data_size
+              default: tiny
+            - name: node_type
+              default: D16sv5
+            - name: run_mode
+              default: full
+            - name: table_name
+              default: ""
+          tasks:
+            - task_key: train
+              notebook_task:
+                notebook_path: ./notebooks/train_xgb_single.ipynb
+                base_parameters:
+                  data_size: "{{job.parameters.data_size}}"
+                  node_type: "{{job.parameters.node_type}}"
+                  run_mode: "{{job.parameters.run_mode}}"
+                  table_name: "{{job.parameters.table_name}}"
+                  catalog: ${var.catalog}
+                  schema: ${var.schema}
+                source: WORKSPACE
+              new_cluster:
+                spark_version: "17.3.x-cpu-ml-scala2.13"  # ML Runtime 17.3 LTS with XGBoost
+                node_type_id: "Standard_D16s_v5"  # 16 cores, 64GB RAM
+                num_workers: 0  # Single node (driver only)
+                data_security_mode: SINGLE_USER  # Enable Unity Catalog
+                spark_conf:
+                  spark.databricks.cluster.profile: singleNode
+                  spark.master: "local[*, 4]"
+                custom_tags:
+                  ResourceClass: SingleNode
+                azure_attributes:
+                  availability: SPOT_WITH_FALLBACK_AZURE
+                  spot_bid_max_price: -1
+              libraries:
+                - pypi:
+                    package: psutil  # Required for MLflow system metrics
+          tags:
+            project: scaling_xgb
+            environment: ${var.env}
+            node_type: D16sv5
     # In prod, you might want to use a service principal
     # run_as:
     #   service_principal_name: your-sp@your-workspace.com
@@ -97,59 +210,6 @@ resources:
     # XGBoost Single-Node Training Jobs
     # Three hardware configurations for benchmarking
     
-    train_xgb_single_d16:
-      name: "[${var.env}] Train XGBoost Single (D16s_v5)"
-      description: "Train XGBoost on single node - 16 cores, 64GB RAM"
-      
-      parameters:
-        - name: data_size
-          default: tiny
-        - name: node_type
-          default: D16sv5
-        - name: run_mode
-          default: full
-        - name: table_name
-          default: ""
-
-      tasks:
-        - task_key: train
-          notebook_task:
-            notebook_path: ./notebooks/train_xgb_single.ipynb
-            base_parameters:
-              data_size: "{{job.parameters.data_size}}"
-              node_type: "{{job.parameters.node_type}}"
-              run_mode: "{{job.parameters.run_mode}}"
-              table_name: "{{job.parameters.table_name}}"
-              catalog: ${var.catalog}
-              schema: ${var.schema}
-            source: WORKSPACE
-          
-          new_cluster:
-            spark_version: "17.3.x-cpu-ml-scala2.13"  # ML Runtime 17.3 LTS with XGBoost
-            node_type_id: "Standard_D16s_v5"  # 16 cores, 64GB RAM
-            num_workers: 0  # Single node (driver only)
-            data_security_mode: SINGLE_USER  # Enable Unity Catalog
-            
-            spark_conf:
-              spark.databricks.cluster.profile: singleNode
-              spark.master: "local[*, 4]"
-            
-            custom_tags:
-              ResourceClass: SingleNode
-            
-            azure_attributes:
-              availability: SPOT_WITH_FALLBACK_AZURE
-              spot_bid_max_price: -1
-          
-          libraries:
-            - pypi:
-                package: psutil  # Required for MLflow system metrics
-
-      tags:
-        project: scaling_xgb
-        environment: ${var.env}
-        node_type: D16sv5
-
     train_xgb_single_e16:
       name: "[${var.env}] Train XGBoost Single (E16s_v5)"
       description: "Train XGBoost on single node - 16 cores, 128GB RAM"
@@ -784,37 +844,6 @@ resources:
         num_workers: "8"
         node_type: D16sv5
 
-    # ---------------------------------------------------------------------------
-    # LEGACY / DEBUG JOBS
-    # ---------------------------------------------------------------------------
-
-    # Debug job for Ray setup diagnosis
-    debug_ray_setup:
-      name: "[${var.env}] Debug Ray Setup"
-      description: "Diagnostic notebook to test Ray on Spark"
-
-      tasks:
-        - task_key: debug
-          notebook_task:
-            notebook_path: ./notebooks/debug_ray_setup.ipynb
-            source: WORKSPACE
-          
-          new_cluster:
-            spark_version: "17.3.x-cpu-ml-scala2.13"
-            node_type_id: "Standard_D8s_v5"
-            num_workers: 2
-            data_security_mode: SINGLE_USER
-            azure_attributes:
-              availability: SPOT_WITH_FALLBACK_AZURE
-              spot_bid_max_price: -1
-          
-          libraries:
-            - pypi:
-                package: psutil
-
-      tags:
-        project: scaling_xgb
-        environment: ${var.env}
 
 # =========================================================================
     # GPU SCALING JOBS (NCT4 VMs)
@@ -1029,37 +1058,6 @@ resources:
         node_type: NC4asT4v3
         gpu: "true"
 
-    # ---------------------------------------------------------------------------
-    # LEGACY / DEBUG JOBS
-    # ---------------------------------------------------------------------------
-
-    # Debug job for Ray setup diagnosis
-    debug_ray_setup:
-      name: "[${var.env}] Debug Ray Setup"
-      description: "Diagnostic notebook to test Ray on Spark"
-
-      tasks:
-        - task_key: debug
-          notebook_task:
-            notebook_path: ./notebooks/debug_ray_setup.ipynb
-            source: WORKSPACE
-          
-          new_cluster:
-            spark_version: "17.3.x-cpu-ml-scala2.13"
-            node_type_id: "Standard_D8s_v5"
-            num_workers: 2
-            data_security_mode: SINGLE_USER
-            azure_attributes:
-              availability: SPOT_WITH_FALLBACK_AZURE
-              spot_bid_max_price: -1
-          
-          libraries:
-            - pypi:
-                package: psutil
-
-      tags:
-        project: scaling_xgb
-        environment: ${var.env}
 
     # =========================================================================
     # PHASE 4: 100M PLASMA TUNING EXPERIMENTS
@@ -1076,7 +1074,7 @@ resources:
       tasks:
         - task_key: train_plasma
           notebook_task:
-            notebook_path: ./notebooks/train_xgb_ray_plasma.ipynb
+            notebook_path: ./notebooks/train_xgb_ray.ipynb
             base_parameters:
               data_size: "large"
               node_type: "D16sv5x8"
@@ -1130,7 +1128,7 @@ resources:
       tasks:
         - task_key: train_plasma
           notebook_task:
-            notebook_path: ./notebooks/train_xgb_ray_plasma.ipynb
+            notebook_path: ./notebooks/train_xgb_ray.ipynb
             base_parameters:
               data_size: "large"
               node_type: "E16sv5x8"
@@ -1186,7 +1184,7 @@ resources:
       tasks:
         - task_key: debug
           notebook_task:
-            notebook_path: ./notebooks/debug_ray_setup.ipynb
+            notebook_path: ./notebooks/train_xgb_ray.ipynb
             source: WORKSPACE
           
           new_cluster:

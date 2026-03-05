@@ -1,14 +1,13 @@
-# Scaling XGBoost & LightGBM on Databricks
+# Scaling XGBoost on Databricks
 
-Scaling gradient-boosted tree training from small to large datasets on Databricks, exploring three approaches: Spark-native distributed, Ray on Spark distributed, and GPU acceleration.
+Scaling gradient-boosted tree training from small to large datasets on Databricks, with current notebooks for Ray on Spark distributed CPU training and GPU acceleration.
 
 ## Goal
 
-Find the best way to train XGBoost and LightGBM at scale (10M–500M+ rows) on Databricks by systematically comparing:
+Find the best way to train XGBoost at scale (10M–500M+ rows) on Databricks by systematically comparing:
 
-1. **Spark-native** — `SparkXGBClassifier` with Spark ML Pipelines (no external frameworks)
-2. **Ray on Spark** — `DataParallelTrainer` / `xgboost_ray` for distributed CPU training across Spark executors
-3. **GPU** — Single-node CUDA training with XGBoost (`device=cuda`) and LightGBM (`device=gpu`) on NC-series VMs
+1. **Ray on Spark** — `DataParallelTrainer` for distributed CPU training across Spark executors
+2. **GPU** — Single-node CUDA training with XGBoost (`device=cuda`) on NC-series VMs
 
 Each approach is benchmarked end-to-end (data load → train → evaluate) with MLflow tracking, so results are directly comparable.
 
@@ -38,13 +37,13 @@ Each approach is benchmarked end-to-end (data load → train → evaluate) with 
 
 ## Project Overview
 
-This project benchmarks XGBoost and LightGBM at scale on Databricks, progressing from small datasets (10K rows) to large ones (100M+ rows) across multiple scaling strategies. The experiments cover:
+This project benchmarks XGBoost at scale on Databricks, progressing from small datasets (10K rows) to large ones (100M+ rows) across multiple scaling strategies. The experiments cover:
 
 - **Data sizes**: 10K to 500M+ rows, 20–500 features (numerical + categorical)
-- **Scaling approaches**: Single-node CPU, Spark-native distributed, Ray on Spark distributed, single-node GPU
-- **Frameworks**: XGBoost (CPU + GPU), LightGBM (GPU), SparkXGBClassifier
-- **Cluster configurations**: D8s/D16s/E16s/E32s (CPU), NC8as_T4_v3 (GPU) Azure VMs, 1–8 worker nodes
-- **Distributed backends**: Spark ML Pipelines, Ray `DataParallelTrainer`, `xgboost_ray`
+- **Scaling approaches**: Single-node CPU, Ray on Spark distributed, single-node GPU
+- **Frameworks**: XGBoost (CPU + GPU)
+- **Cluster configurations**: D8s/D16s/E16s/E32s (CPU), NC4as_T4_v3/NC16as_T4_v3 (GPU) Azure VMs, 1–8 worker nodes
+- **Distributed backends**: Ray `DataParallelTrainer`
 - **Object store tuning**: Ray Plasma/object store memory, spill directories, heap sizing
 - **Observability**: Per-worker CPU/memory/disk/network metrics via MLflow
 
@@ -89,29 +88,24 @@ XGBoost ships a vendored `libgomp` inside `xgboost.libs/`. The system `libgomp.s
 
 ### Spark-Native Distributed
 
-`SparkXGBClassifier` runs XGBoost directly on Spark executors via `xgboost.spark`. No Ray or external frameworks needed — data stays in Spark DataFrames throughout, with Spark ML Pipelines handling feature preprocessing (StringIndexer, VectorAssembler).
-
-- **Notebook**: `notebooks/train_xgb_dist_spark.ipynb`
-- **Runtime**: Standard Databricks ML Runtime (CPU)
-- **Data flow**: Unity Catalog → Spark DataFrame → Spark ML Pipeline → SparkXGBClassifier
-- **When to use**: Simplest path when the cluster already has Spark executors and you want to avoid Ray setup overhead
+Spark-native distributed XGBoost (`SparkXGBClassifier`) is not currently included in this repo's notebooks. The active distributed path is Ray on Spark.
 
 ### Ray on Spark (CPU)
 
-Distributes XGBoost training across Spark executors via [Ray on Spark](https://docs.ray.io/en/latest/cluster/vms/user-guides/community/spark.html). Uses `DataParallelTrainer` with `XGBoostConfig()` or `xgboost_ray.train()` with `RayDMatrix`. Includes per-worker system metrics, OMP diagnostics, and Plasma object store tuning.
+Distributes XGBoost training across Spark executors via [Ray on Spark](https://docs.ray.io/en/latest/cluster/vms/user-guides/community/spark.html). Uses `DataParallelTrainer` with per-worker system metrics, OMP diagnostics, and shared config presets.
 
-- **Notebooks**: `notebooks/train_xgb_ray.ipynb`, `notebooks/train_xgb_ray_plasma.ipynb`
+- **Notebook**: `notebooks/train_xgb_ray.ipynb`
 - **Runtime**: Databricks ML Runtime with Ray (CPU)
 - **Data flow**: Unity Catalog → Ray Data (via SQL Warehouse) → DMatrix → distributed xgboost.train()
 - **When to use**: When you need fine-grained control over distributed training, worker-level observability, or are already using Ray for other workloads
 
 ### GPU Acceleration
 
-Single-node GPU training using XGBoost (`tree_method=hist, device=cuda`) and LightGBM (`device=gpu`) on NVIDIA T4 GPUs. Uses a memory-optimised data pipeline: Spark handles loading and categorical encoding, writes to DBFS parquet, then pyarrow.dataset reads directly into float32 numpy arrays to build DMatrix/LightGBM Dataset without the float64 overhead of pandas.
+Single-node GPU training using XGBoost (`tree_method=gpu_hist`) on NVIDIA T4 GPUs. Uses a memory-optimised data pipeline: Spark handles loading and categorical encoding, writes to DBFS parquet, then pyarrow.dataset reads directly into float32 numpy arrays to build DMatrix without the float64 overhead of pandas.
 
-- **Notebooks**: `notebooks/train_xgb_gpu.ipynb` (multi-node via xgboost_ray), `notebooks/Scaling_GPU/train_xgb_gpu_direct.ipynb` (single-node), `notebooks/Scaling_GPU/train_lgbm_gpu.ipynb` (LightGBM)
-- **Runtime**: Databricks GPU ML Runtime 17.3 LTS (NC8as_T4_v3)
-- **Data flow**: Unity Catalog → Spark (categorical encoding) → DBFS parquet → pyarrow.dataset → DMatrix/lgb.Dataset
+- **Notebook**: `notebooks/train_xgb_gpu.ipynb` (single-node GPU XGBoost)
+- **Runtime**: Databricks GPU ML Runtime 17.3 LTS (NC4as_T4_v3 or NC16as_T4_v3)
+- **Data flow**: Unity Catalog → Spark (categorical encoding) → DBFS parquet → pyarrow.dataset → DMatrix
 - **When to use**: When a single GPU node has enough memory for the dataset and you want maximum training speed without multi-node coordination overhead
 
 ---
@@ -154,16 +148,11 @@ Single-node GPU training using XGBoost (`tree_method=hist, device=cuda`) and Lig
 .
 ├── databricks.yml                           # Databricks Asset Bundle — all job definitions
 ├── notebooks/
-│   ├── train_xgb_ray_plasma.ipynb           # Ray distributed XGB with Plasma tuning + OMP fix
 │   ├── train_xgb_ray.ipynb                  # Ray distributed XGB (base, no Plasma tuning)
-│   ├── train_xgb_dist_spark.ipynb           # Spark-native distributed XGB (SparkXGBClassifier)
 │   ├── train_xgb_single.ipynb               # Single-node CPU XGB baseline
-│   ├── train_xgb_gpu.ipynb                  # Multi-node GPU XGB via xgboost_ray
+│   ├── train_xgb_gpu.ipynb                  # Single-node GPU XGB
 │   ├── generate_imbalanced_data.ipynb       # Synthetic data generation (numerical + categorical)
-│   ├── debug_ray_setup.ipynb                # Ray on Spark diagnostic notebook
-│   └── Scaling_GPU/
-│       ├── train_xgb_gpu_direct.ipynb       # Single-node GPU XGB (CUDA via parquet pipeline)
-│       └── train_lgbm_gpu.ipynb             # Single-node GPU LightGBM
+│   └── (additional notebooks may be added over time)
 ├── configs/
 │   ├── single_node.yml                      # Single-node job configs
 │   ├── ray_scaling.yml                      # Ray distributed job configs
@@ -189,13 +178,9 @@ Single-node GPU training using XGBoost (`tree_method=hist, device=cuda`) and Lig
 
 | Notebook | Approach | Key Features |
 |----------|----------|--------------|
-| `train_xgb_ray_plasma.ipynb` | Ray on Spark (CPU) | OMP fix, runtime_env, OmpDiagnosticsCollector, worker metrics, Plasma tuning widgets |
 | `train_xgb_ray.ipynb` | Ray on Spark (CPU) | Simpler Ray distributed version without Plasma tuning |
-| `train_xgb_dist_spark.ipynb` | Spark-native | SparkXGBClassifier, Spark ML Pipeline, no Ray dependency |
 | `train_xgb_single.ipynb` | Single-node CPU | Direct XGBoost training on driver node (baseline) |
-| `train_xgb_gpu.ipynb` | GPU (multi-node) | xgboost_ray with RayDMatrix, 1 GPU per actor, NC8as_T4_v3 |
-| `Scaling_GPU/train_xgb_gpu_direct.ipynb` | GPU (single-node) | Native XGBoost CUDA, pyarrow float32 pipeline, memory-optimised |
-| `Scaling_GPU/train_lgbm_gpu.ipynb` | GPU (single-node) | LightGBM `device=gpu`, same parquet pipeline as XGBoost GPU |
+| `train_xgb_gpu.ipynb` | GPU (single-node) | Native XGBoost CUDA with single-GPU execution |
 | `generate_imbalanced_data.ipynb` | Data generation | Batched column generation, categorical features, localCheckpoint for lineage |
 
 ---
@@ -359,7 +344,7 @@ This was critical for diagnosing the OMP issue — without per-worker CPU metric
 - Databricks workspace with ML Runtime 17.3 LTS (CPU jobs) or GPU ML Runtime 17.3 LTS (GPU jobs)
 - Unity Catalog enabled (`brian_gen_ai.xgb_scaling` schema)
 - Databricks CLI configured (`~/.databrickscfg`)
-- For GPU notebooks: NC8as_T4_v3 (or similar GPU) cluster
+- For GPU notebooks: NC4as_T4_v3 or NC16as_T4_v3 (or similar T4 GPU) cluster
 
 ### Deploy and Run
 
@@ -391,7 +376,7 @@ When the Databricks CLI is unavailable, deploy and trigger jobs directly:
 # Upload notebook via workspace import API
 curl -X POST "$DATABRICKS_HOST/api/2.0/workspace/import" \
   -H "Authorization: Bearer $DATABRICKS_TOKEN" \
-  -d '{"path": "/Workspace/Users/.../notebooks/train_xgb_ray_plasma",
+  -d '{"path": "/Workspace/Users/.../notebooks/train_xgb_ray",
        "format": "JUPYTER", "content": "<base64>", "overwrite": true}'
 
 # Trigger a job run
@@ -410,10 +395,9 @@ curl -X POST "$DATABRICKS_HOST/api/2.1/jobs/run-now" \
 |----------|------|-------------|
 | Data Generation | `generate_data_job`, `generate_data_30m`, `generate_data_100m` | Create synthetic datasets at various scales |
 | Single-Node CPU | `train_xgb_single_d16`, `_e16`, `_e32` | Baseline single-node XGBoost (CPU) |
-| Spark Distributed | `train_xgb_dist_spark` | SparkXGBClassifier via Spark ML Pipeline |
 | Ray Distributed | `perf_ray_1m_*`, `perf_ray_10m_*` | Ray on Spark distributed training (CPU) |
-| Plasma Tuning | `plasma_10m_4w_d16_*`, `plasma_10m_4w_e16_*`, `plasma_10m_2w_*` | Object store memory experiments |
-| GPU | `train_xgb_gpu`, `train_xgb_gpu_direct`, `train_lgbm_gpu` | GPU-accelerated XGBoost and LightGBM on NC8as_T4_v3 |
+| Plasma Tuning | `plasma_100m_8w_d16_default`, `plasma_100m_8w_e16_os32` | 100M Ray jobs with plasma-related parameters |
+| GPU | `train_xgb_gpu_nc4_t4`, `train_xgb_gpu_nc16_t4`, `perf_gpu_*` | GPU-accelerated XGBoost on NC-series T4 nodes |
 
 ### Critical Spark Config
 
@@ -423,18 +407,19 @@ spark_conf:
   spark.executorEnv.OMP_NUM_THREADS: "15"  # = vCPUs - 1
 ```
 
-### Notebook Parameters (Plasma Notebook)
+### Notebook Parameters (Ray Notebook)
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `data_size` | `tiny` | Size preset (tiny/small/medium/large/xlarge) |
+| `data_size` | `tiny` | Size preset (tiny/small/medium/medium_large/large/xlarge) |
 | `node_type` | `D8sv5` | Azure VM type for resource sizing |
+| `run_mode` | `full` | Run type (`full` or `smoke`) |
 | `num_workers` | `0` (auto) | Ray training workers (0 = auto from executors) |
 | `cpus_per_worker` | `0` (auto) | CPUs per worker (0 = auto from node type) |
-| `obj_store_mem_gb` | `0` (default) | Plasma object store memory per worker |
-| `heap_mem_gb` | `0` (default) | Ray heap memory per worker |
-| `allow_slow_storage` | `0` | Allow object store on disk (bypass /dev/shm) |
 | `warehouse_id` | `148ccb90...` | Databricks SQL Warehouse for Ray Data |
+| `catalog` | `brian_gen_ai` | Unity Catalog catalog |
+| `schema` | `xgb_scaling` | Unity Catalog schema |
+| `table_name` | `""` | Optional table override (otherwise derived from preset) |
 
 ---
 
