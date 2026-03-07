@@ -1,11 +1,14 @@
 # GPU Scaling Track Configuration
-# ==============================================
 # Experiments: GPU-accelerated XGBoost on Databricks
 # Goal: Compare GPU vs CPU scaling, find GPU memory limits
-# Status: PLANNED — no experiments run yet
 
 track: gpu-scaling
 description: "GPU-accelerated XGBoost — single-GPU and multi-GPU via Ray"
+status: planned
+metadata:
+  schema_version: 1
+  consumed_by: manual
+  source_of_truth: databricks.yml
 
 # Target environment
 platform:
