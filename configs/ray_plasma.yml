@@ -1,10 +1,14 @@
 # Ray Plasma / Object Store Tuning Track Configuration
-# ==============================================
 # Experiments: Tuning Ray Plasma object store for large-scale distributed XGBoost
 # Goal: Determine if object store config matters at different data scales
 
 track: ray-plasma-tuning
 description: "Ray Plasma/object store memory tuning — does it matter for XGBoost at scale?"
+status: active
+metadata:
+  schema_version: 1
+  consumed_by: manual
+  source_of_truth: databricks.yml
 
 # Target environment
 platform:
@@ -67,16 +71,16 @@ plasma_params:
     default: false
     notes: "Enable when obj_store_mem_gb > /dev/shm size (typically 50% of RAM)"
 
-# Key finding (see LEARNINGS.md L3)
+# Key finding.
+# Reference: docs/LEARNINGS.md (Plasma/object store section).
 conclusion_10m: >
   At 10M x 250 features, Plasma config has negligible impact.
   Default Ray allocation (~30% of RAM) is sufficient.
   The OMP_NUM_THREADS fix dominates all other tuning.
   Revisit at 100M+ where data may exceed available memory.
 
-# Notebook: train_xgb_ray_plasma.ipynb
-# This notebook has Databricks widget params for all Plasma settings
-notebook: notebooks/train_xgb_ray_plasma.ipynb
+# Notebook parameter contract for plasma-tuning runs.
+notebook: notebooks/train_xgb_ray.ipynb
 widget_params:
   - data_size
   - node_type

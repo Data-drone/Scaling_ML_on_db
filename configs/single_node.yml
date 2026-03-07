@@ -1,10 +1,14 @@
 # Single-Node Scaling Track Configuration
-# ==============================================
 # Experiments: XGBoost on a single Spark driver node
 # Goal: Establish baselines and find vertical scaling limits
 
 track: single-node-scaling
 description: "Single-node XGBoost baselines across VM sizes and data scales"
+status: active
+metadata:
+  schema_version: 1
+  consumed_by: manual
+  source_of_truth: databricks.yml
 
 # Target environment
 platform:

@@ -1,10 +1,14 @@
 # Ray Distributed Scaling Track Configuration
-# ==============================================
 # Experiments: XGBoost via Ray DataParallelTrainer on Spark
 # Goal: Measure distributed scaling efficiency across worker counts and node types
 
 track: ray-scaling
 description: "Distributed XGBoost via Ray on Spark — worker scaling, data scaling, OMP fix validation"
+status: active
+metadata:
+  schema_version: 1
+  consumed_by: manual
+  source_of_truth: databricks.yml
 
 # Target environment
 platform:
@@ -13,7 +17,8 @@ platform:
   spark_conf:
     spark.databricks.delta.optimizeWrite.enabled: "true"
     spark.task.cpus: "1"
-    # CRITICAL: Without this, XGBoost uses only 1 thread per worker (see LEARNINGS.md L1)
+    # CRITICAL: Without this, XGBoost uses only 1 thread per worker.
+    # Reference: docs/LEARNINGS.md (OMP_NUM_THREADS section).
     spark.executorEnv.OMP_NUM_THREADS: "15"
   libraries:
     - psutil  # MLflow system metrics
@@ -63,7 +68,8 @@ experiments:
       - { data: large, workers: 8, node: D16sv5 }
       - { data: large, workers: 8, node: E16sv5, notes: "Memory-optimised nodes for 100M" }
 
-# OMP Fix Configuration (see LEARNINGS.md L1)
+# OMP fix configuration.
+# Reference: docs/LEARNINGS.md (OMP_NUM_THREADS section).
 omp_fix:
   strategy: "spark_conf + runtime_env + worker_level"
   target_threads: 15  # vCPUs - 1
