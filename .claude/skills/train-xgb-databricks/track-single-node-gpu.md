@@ -7,7 +7,7 @@ Complete notebook recipe for training XGBoost on a single Databricks node using 
 **Runtime:** `17.3.x-gpu-ml-scala2.13`
 **Node types:** NC4as_T4_v3 (1x T4, 16 GB VRAM), NC16as_T4_v3 (4x T4, 64 GB total)
 
-**Current limitation:** Uses single-GPU `gpu_hist` training only. On multi-GPU nodes, only the GPU specified by `gpu_id` is used.
+**Current limitation:** Uses single-GPU training only. On multi-GPU nodes, only the GPU specified by `device` is used.
 
 ## Notebook Structure
 
@@ -188,8 +188,8 @@ from mlflow.models import infer_signature
 
 xgb_params = {
     "objective": "binary:logistic",
-    "tree_method": "gpu_hist",
-    "gpu_id": selected_gpu,
+    "tree_method": "hist",            # XGBoost 2.0+: "hist" auto-uses GPU when device is set
+    "device": f"cuda:{selected_gpu}", # XGBoost 2.0+: replaces deprecated gpu_hist + gpu_id
     "n_estimators": 100,
     "max_depth": 6,
     "learning_rate": 0.1,

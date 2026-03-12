@@ -121,9 +121,16 @@ databricks_token = dbutils.notebook.entry_point.getDbutils().notebook().getConte
 os.environ["DATABRICKS_HOST"] = databricks_host_url
 os.environ["DATABRICKS_TOKEN"] = databricks_token
 
-# Get cluster info
+# Get cluster info — retry as executors may be slow to register on new clusters
 sc = spark.sparkContext
-num_executors = sc._jsc.sc().getExecutorMemoryStatus().size() - 1
+import time as _time
+for _attempt in range(5):
+    num_executors = sc._jsc.sc().getExecutorMemoryStatus().size() - 1
+    if num_executors >= 1:
+        break
+    print(f"Waiting for executors... attempt {_attempt+1} (got {num_executors})")
+    _time.sleep(10)
+print(f"Executors available: {num_executors}")
 
 # Determine per-node vCPU from node_type string (e.g., D16sv5 -> 16)
 node_type_lower = node_type.lower()
@@ -293,6 +300,16 @@ import ray.data
 if not warehouse_id:
     raise ValueError("warehouse_id is required for distributed Ray Data loading")
 
+# Re-assert Databricks credentials on the driver.
+# ray.init(runtime_env={"env_vars": ...}) sets env vars for WORKERS only;
+# the driver process may lose them after ray.shutdown()+ray.init().
+# read_databricks_tables() checks the driver env for DATABRICKS_TOKEN.
+# CRITICAL: Strip https:// from HOST — Ray constructs URLs from it and
+# double-prefixing causes host='https' resolution errors (see G9).
+host_for_ray = databricks_host_url.replace("https://", "").replace("http://", "")
+os.environ["DATABRICKS_HOST"] = host_for_ray
+os.environ["DATABRICKS_TOKEN"] = databricks_token
+
 print(f"Loading: {input_table} via warehouse {warehouse_id}")
 load_start = time.time()
 
@@ -436,7 +453,7 @@ def xgb_train_fn(config):
     def shard_to_dmatrix(shard):
         x_batches, y_batches = [], []
         for batch in shard.iter_batches(batch_format="numpy", batch_size=65536):
-            feature_cols = [c for c in batch.keys() if c != label_col]
+            feature_cols = sorted(c for c in batch.keys() if c != label_col)
             x_batch = np.column_stack([batch[c] for c in feature_cols]).astype(np.float32, copy=False)
             y_batch = batch[label_col].astype(np.float32, copy=False)
             x_batches.append(x_batch)
@@ -549,12 +566,16 @@ with mlflow.start_run(run_name=run_name, log_system_metrics=True) as run:
 
     # Extract model and evaluate
     import xgboost as xgb
+    from mlflow.models import infer_signature
     t0 = time.time()
     booster = RayTrainReportCallback.get_model(result.checkpoint)
 
+    # BUG-2 fix: signature is REQUIRED for Unity Catalog model registration
+    sig = infer_signature(X_test_eval, booster.predict(xgb.DMatrix(X_test_eval)))
     mlflow.xgboost.log_model(
         xgb_model=booster,
         artifact_path="model",
+        signature=sig,
         registered_model_name=uc_model_name,
     )
     mlflow.log_param("registered_model_name", uc_model_name)
