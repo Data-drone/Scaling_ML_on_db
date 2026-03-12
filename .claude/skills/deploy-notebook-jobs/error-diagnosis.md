@@ -98,8 +98,8 @@ Simplified pattern from `src/crash_retriever.py` for agent use:
 import re
 import requests
 
-HOST = "https://adb-984752964297111.11.azuredatabricks.net"
-TOKEN = "dapi..."  # from dbutils.secrets or env var
+HOST = os.environ["DATABRICKS_HOST"]  # or hardcode your workspace URL
+TOKEN = os.environ["DATABRICKS_TOKEN"]  # or use dbutils.secrets
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 
 
@@ -286,22 +286,25 @@ cluster_resources = ray.cluster_resources()  # Now safe
 
 ---
 
-### RE5: Empty error_trace (infrastructure failure)
+### RE5: Empty error_trace (infrastructure or internal failure)
 
 **Signature:** `error_trace` field is empty or missing in `get-run-output` response.
 
 | Symptom | Likely cause |
 |---------|-------------|
 | Empty trace + short execution_duration (<30s) | Cluster startup failure or spot preemption |
+| Empty trace + execution ~60-120s + cluster healthy | Notebook internal crash — likely env var loss after `ray.init(runtime_env=...)` causing `read_databricks_tables` to fail (see G9 in gotchas). The crash produces no trace because the error occurs in a native C extension. |
 | Empty trace + cluster terminated message | User cancellation or timeout |
 | Empty trace + "unable to access notebook" message | Notebook path wrong or workspace drift (L15) |
 
 **Debug approach:**
 1. Check cluster events API (see Step 4 above)
-2. Check if notebook path exists: `databricks workspace get-status <NOTEBOOK_PATH>`
-3. Re-deploy bundle to sync workspace: `databricks bundle deploy -t dev`
+2. If cluster events show `JOB_FINISHED` (cluster was healthy), the issue is inside the notebook
+3. Create a diagnostic notebook with per-cell checkpoints and `dbutils.notebook.exit()` to isolate which cell crashes
+4. Common culprit for Ray notebooks: `DATABRICKS_TOKEN` env var lost after `ray.shutdown()` + `ray.init(runtime_env=...)`. Fix: re-assert `os.environ["DATABRICKS_TOKEN"]` before `ray.data.read_databricks_tables()`
+5. Check if notebook path exists: `databricks workspace get-status <NOTEBOOK_PATH>`
 
-**Frequency:** ~41 failures (Feb, mostly older scaling experiments)
+**Frequency:** ~41 failures (Feb, mostly older scaling experiments) + 2 failures (Mar 12, Ray env var loss)
 
 ---
 

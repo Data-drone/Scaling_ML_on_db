@@ -145,7 +145,7 @@ Good starting point for imbalanced binary classification:
 ```python
 xgb_params = {
     "objective": "binary:logistic",
-    "tree_method": "hist",       # or "gpu_hist" for GPU track
+    "tree_method": "hist",       # for GPU track, add "device": "cuda:0"
     "n_estimators": 100,
     "max_depth": 6,
     "learning_rate": 0.1,

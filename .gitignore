@@ -31,6 +31,9 @@ htmlcov/
 .databricks/
 *.whl
 
+# Throwaway notebooks (skill tests, experiments)
+notebooks/throwaway/
+
 # Never commit secrets
 .env
 .env.*

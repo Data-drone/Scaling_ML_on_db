@@ -64,3 +64,45 @@ from mlflow.models import infer_signature
 sig = infer_signature(X_sample, model.predict(X_sample))
 mlflow.sklearn.log_model(model, "model", signature=sig, registered_model_name=uc_name)
 ```
+
+## G9: DATABRICKS_HOST format for ray.data.read_databricks_tables
+
+`ray.data.read_databricks_tables()` reads `DATABRICKS_HOST` from env vars to construct API URLs. If `DATABRICKS_HOST` includes the `https://` prefix (as Databricks contexts return it), Ray constructs `https://https://adb-...` which resolves `host='https'` and fails with:
+```
+HTTPSConnectionPool(host='https', port=443): Max retries exceeded
+```
+
+Also: after `ray.shutdown()` + `ray.init(runtime_env=...)`, the driver process may lose `DATABRICKS_TOKEN` and `DATABRICKS_HOST`. The `runtime_env.env_vars` only propagate to *workers*, not the driver.
+
+The error trace from the Jobs API will be *empty* (RE5 pattern) because the notebook crashes internally.
+
+**Fix:** Re-assert env vars immediately before `read_databricks_tables()`, and strip the protocol prefix from HOST:
+```python
+host_for_ray = databricks_host_url.replace("https://", "").replace("http://", "")
+os.environ["DATABRICKS_HOST"] = host_for_ray
+os.environ["DATABRICKS_TOKEN"] = databricks_token
+```
+
+## G10: XGBoost 2.0+ deprecates gpu_hist and gpu_id
+
+Starting with XGBoost 2.0 (Oct 2023), `tree_method="gpu_hist"` and `gpu_id` are deprecated. Use instead:
+```python
+xgb_params = {
+    "tree_method": "hist",            # NOT "gpu_hist"
+    "device": f"cuda:{selected_gpu}", # NOT "gpu_id"
+}
+```
+The old params still work via a compatibility shim in the sklearn wrapper on DBR 17.3, but emit deprecation warnings and may break in future XGBoost releases.
+
+## G11: Executor registration delay on new job clusters
+
+When a Databricks job spins up a new cluster, executors may not be registered with the Spark context immediately. Code that reads `sc._jsc.sc().getExecutorMemoryStatus().size()` right at notebook start may see 0 executors.
+
+**Fix:** Retry with backoff:
+```python
+for attempt in range(5):
+    num_executors = sc._jsc.sc().getExecutorMemoryStatus().size() - 1
+    if num_executors >= 1:
+        break
+    time.sleep(10)
+```
