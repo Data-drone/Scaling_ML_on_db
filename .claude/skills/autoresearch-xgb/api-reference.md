@@ -149,7 +149,7 @@ curl -s \
   "${DATABRICKS_HOST}/api/1.2/commands/status?clusterId=${CLUSTER_ID}&contextId=${CONTEXT_ID}&commandId=${COMMAND_ID}"
 ```
 
-Poll every 5 seconds. Status values: `Queued` → `Running` → `Finished`/`Error`/`Cancelled`.
+Poll every 5 seconds. Status values: `Queued` → `Running` → `Finished`/`Cancelled`.
 
 **Response on success:**
 ```json
@@ -167,13 +167,21 @@ Poll every 5 seconds. Status values: `Queued` → `Running` → `Finished`/`Erro
 ```json
 {
   "id": "cmd-abc123",
-  "status": "Error",
+  "status": "Finished",
   "results": {
     "resultType": "error",
-    "cause": "NameError: name 'undefined_var' is not defined",
-    "summary": "NameError: ..."
+    "cause": "NameError: name 'undefined_var' is not defined\n...(traceback with ANSI codes)...",
+    "summary": "NameError: name 'undefined_var' is not defined"
   }
 }
+```
+
+**Important:** Error commands return `status: "Finished"` (not `"Error"`), but
+with `resultType: "error"`. Always check `results.resultType` to distinguish
+success from error. The `cause` field contains ANSI escape codes — strip with:
+```python
+import re
+clean = re.sub(r'\x1b\[[0-9;]*m', '', cause)
 ```
 
 ### Destroy execution context
@@ -231,6 +239,22 @@ curl -s \
 ---
 
 ## Workspace Import (upload notebook)
+
+### Create parent directory (required before first upload)
+
+```bash
+curl -s -X POST \
+  -H "Authorization: Bearer $(databricks-token)" \
+  -H "Content-Type: application/json" \
+  "${DATABRICKS_HOST}/api/2.0/workspace/mkdirs" \
+  -d "{\"path\": \"/Users/${USER_IDENTITY}/autoresearch\"}"
+```
+
+The `USER_IDENTITY` is the user email or service principal ID. Get it from:
+```bash
+curl -s -H "Authorization: Bearer $(databricks-token)" \
+  "${DATABRICKS_HOST}/api/2.0/preview/scim/v2/Me" | jq -r '.userName'
+```
 
 ### Upload/overwrite notebook
 
