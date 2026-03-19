@@ -81,6 +81,15 @@ final notebook, terminate cluster, report to user.
 - **Existing XGB skill:** `.claude/skills/train-xgb-databricks/` (for Ray patterns)
 - **Deploy skill:** `.claude/skills/deploy-notebook-jobs/` (for error diagnosis)
 
+## Critical Configuration Notes
+
+- **Unity Catalog access:** Clusters MUST include `data_security_mode: "SINGLE_USER"`
+  AND `single_user_name: "<SP_ID_or_email>"`. Without these, `spark.read.table()` fails
+  with `UC_NOT_ENABLED`. Get user identity from SCIM API: `GET /api/2.0/preview/scim/v2/Me`.
+- **SQL Statement API `wait_timeout`:** Max is `50s`, not `60s`. Values > 50s return 400.
+- **Command execution error status:** Errors return `status: "Finished"` with
+  `results.resultType: "error"`, NOT `status: "Error"`. Always check `resultType`.
+
 ## Error Handling
 
 - Cell error → read error, one retry with fix, if still fails log in markdown

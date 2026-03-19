@@ -43,6 +43,7 @@ Record the chosen `track`: `"single-node-cpu"`, `"single-node-highmem"`, or
   "num_workers": 0,
   "autotermination_minutes": "{budget_minutes + 10}",
   "data_security_mode": "SINGLE_USER",
+  "single_user_name": "{user_identity}",
   "spark_conf": {
     "spark.databricks.cluster.profile": "singleNode",
     "spark.master": "local[*, 4]"
@@ -51,6 +52,9 @@ Record the chosen `track`: `"single-node-cpu"`, `"single-node-highmem"`, or
   "azure_attributes": {"availability": "SPOT_WITH_FALLBACK_AZURE", "spot_bid_max_price": -1}
 }
 ```
+
+`single_user_name` is *required* for Unity Catalog access on clusters.
+Get `user_identity` from: `curl -s -H "Authorization: Bearer $(databricks-token)" "${DATABRICKS_HOST}/api/2.0/preview/scim/v2/Me" | jq -r '.userName'`
 
 **Single-node high-mem:** Same but `"node_type_id": "Standard_E32s_v5"`.
 
@@ -63,6 +67,7 @@ Record the chosen `track`: `"single-node-cpu"`, `"single-node-highmem"`, or
   "num_workers": "{N}",
   "autotermination_minutes": "{budget_minutes + 10}",
   "data_security_mode": "SINGLE_USER",
+  "single_user_name": "{user_identity}",
   "spark_conf": {
     "spark.executorEnv.OMP_NUM_THREADS": "15"
   },
