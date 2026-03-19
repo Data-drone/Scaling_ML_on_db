@@ -38,6 +38,7 @@ curl -s -X POST \
     "num_workers": 0,
     "autotermination_minutes": 70,
     "data_security_mode": "SINGLE_USER",
+    "single_user_name": "${USER_IDENTITY}",
     "spark_conf": {
       "spark.databricks.cluster.profile": "singleNode",
       "spark.master": "local[*, 4]"
@@ -60,6 +61,7 @@ Response: `{"cluster_id": "0319-123456-abc123"}`
 - Remove `singleNode` profile and `local[*,4]` from spark_conf
 - Add `"spark.executorEnv.OMP_NUM_THREADS": "15"` to spark_conf
 - Change `ResourceClass` to `"default"`
+- Keep `single_user_name` — required for UC access on any cluster type
 
 ### Poll cluster status
 
