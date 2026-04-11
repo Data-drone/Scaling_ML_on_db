@@ -365,6 +365,48 @@ Two GPU benchmark jobs (10M and 30M) were submitted simultaneously, each request
 
 ---
 
+### L19: Autoresearch Ray pipeline produced near-random models (AUC-PR ~0.02)
+
+**Severity:** Critical — silently produced garbage results for 10M and 30M datasets
+**Track:** Autoresearch Skill, Ray Scaling
+**Date discovered:** 2026-04-11
+**Status:** RESOLVED — sanity check added to Phase 4, experiments re-run via dedicated notebook
+
+**Problem:**
+The autoresearch-xgb skill generated Ray distributed training code for the 10M and 30M datasets that produced AUC-PR ~0.02-0.03 (near random chance for a ~2% minority class). The dedicated `train_xgb_ray.ipynb` notebook produces AUC-PR=1.0 on the same data with the same Ray pipeline.
+
+**Impact:**
+| Pipeline | Dataset | AUC-PR | AUC-ROC | Status |
+|----------|---------|--------|---------|--------|
+| Autoresearch (broken) | 10M | 0.024-0.032 | 0.55-0.65 | Near random |
+| Autoresearch (broken) | 30M | 0.023-0.029 | 0.54-0.63 | Near random |
+| Dedicated notebook (correct) | 10M | 1.0 | 1.0 | Perfect |
+| Dedicated notebook (correct) | 30M | 1.0 | 1.0 | Perfect |
+
+**Root cause:**
+The autoresearch agent dynamically generates training code at runtime via the Databricks Command Execution API. The generated code diverged from the tested `train_xgb_ray.ipynb` in ways that broke model quality. Most likely causes (the exact generated code is not preserved):
+
+1. **API parameter mismatch:** Using sklearn-style `learning_rate` instead of native API `eta` in the `xgboost.train()` call, causing the parameter to be silently ignored (defaults to 0.3)
+2. **Feature column ordering mismatch:** Using `sorted()` in `shard_to_dmatrix()` but schema-order in the eval path, making predictions appear random
+3. **DMatrix construction bug:** Feature/label columns swapped or feature matrix built incorrectly in the generated `shard_to_dmatrix()` function
+
+**Fix (3 parts):**
+1. **Sanity check in Phase 4:** After baseline training, verify AUC-PR > 0.1 for binary tasks. If near random chance, halt and flag as pipeline bug (added to `phase-4-train.md`)
+2. **Ray-specific guidance:** Added explicit table of sklearn vs native API differences to prevent the agent from mixing them (added to `phase-4-train.md`)
+3. **Re-run via working notebook:** 10M and 30M experiments re-run using `train_xgb_ray.ipynb` which has the correct, tested pipeline
+
+**Key learning:** Agent-generated code that runs on remote infrastructure is especially dangerous because:
+- You can't see the exact code that executed (only the markdown documentation notebook is saved)
+- Results look plausible at first glance (training completes, MLflow metrics are logged, model is registered)
+- The failure mode is silent — no errors, no warnings, just garbage predictions
+- A simple sanity check (AUC-PR vs random chance) would have caught this immediately
+
+**Prevention:** Always add output validation gates in automated pipelines. For classification:
+- Binary: `auc_pr > max(0.1, minority_ratio * 3)` or flag as broken
+- Multiclass: `accuracy > (1/n_classes) * 1.5` or flag as broken
+
+---
+
 ## Open Questions / Future Learnings
 
 ### Q1: Does Plasma tuning matter at 100M+ rows?

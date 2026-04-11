@@ -5,115 +5,81 @@ then try variations if budget allows.
 
 ## Budget Guard
 
-Before each experiment, check remaining time:
+Run before each experiment. Reserve 20% of `budget_minutes` for Phase 5:
 
 ```python
-import time
-elapsed_minutes = (time.time() - budget_start) / 60
-remaining = budget_minutes - elapsed_minutes
-phase5_reserve = budget_minutes * 0.2  # 20% for finalize
-
-if remaining < phase5_reserve:
-    print(f"Budget guard: {remaining:.1f} min left, need {phase5_reserve:.1f} for finalize")
-    print("Skipping remaining experiments — moving to Phase 5")
-    # Go to Phase 5
+elapsed = (time.time() - budget_start) / 60
+remaining = budget_minutes - elapsed
+if remaining < budget_minutes * 0.2:
+    # Skip remaining experiments → Phase 5
 ```
-
-Run this check as a cell before each experiment.
 
 ## Progress Guard
 
-Track best metric and stop if stagnant:
+Primary metric: `auc_pr` (binary) or `accuracy` (multiclass). Track `best_metric_value`, `best_run_id`, `best_experiment`, `experiments_without_improvement`.
 
 ```
-best_auc_pr = 0.0
-best_run_id = None
-best_experiment = None
-experiments_without_improvement = 0
-
-# After each experiment:
-if new_auc_pr > best_auc_pr:
-    best_auc_pr = new_auc_pr
-    best_run_id = run_id
-    best_experiment = experiment_name
-    experiments_without_improvement = 0
-else:
-    experiments_without_improvement += 1
-    if experiments_without_improvement >= 2:
-        print("Progress guard: no improvement in 2 experiments — stopping")
-        # Go to Phase 5
+After each experiment:
+  if new_metric > best_metric_value → update best, reset counter
+  else → increment counter; if >= 2 → stop, go to Phase 5
 ```
 
 ## Experiment 1: Baseline (always runs)
 
 ### Cell: Baseline training (single-node)
 
-```python
-import xgboost as xgb
-import time, os
-from sklearn.metrics import (average_precision_score, roc_auc_score,
-    f1_score, confusion_matrix, classification_report)
-from mlflow.models import infer_signature
+Build dynamically based on `task_type` from Phase 3.
 
-xgb_params = {
-    "objective": "binary:logistic",
-    "tree_method": "hist",
-    "n_estimators": 100,
-    "max_depth": 6,
-    "learning_rate": 0.1,
-    "scale_pos_weight": scale_pos_weight,
-    "n_jobs": os.cpu_count(),
-    "random_state": 42,
-    "verbosity": 1,
-}
+**Baseline params:** `tree_method=hist`, `n_estimators=100`, `max_depth=6`, `learning_rate=0.1`, `n_jobs=os.cpu_count()`, `random_state=42`.
+- Binary: `objective=binary:logistic`, `scale_pos_weight`, `eval_metric=aucpr`
+- Multiclass: `objective=multi:softprob`, `num_class=n_classes`, `eval_metric=mlogloss`
 
-with mlflow.start_run(run_name="baseline", log_system_metrics=True) as run:
-    mlflow.log_params({
-        "experiment": "baseline",
-        "table": "{table}",
-        "n_rows": len(X_train) + len(X_test),
-        "n_features": X_train.shape[1],
-        **{f"xgb_{k}": v for k, v in xgb_params.items()},
-    })
+In `mlflow.start_run(run_name="baseline", log_system_metrics=True)`:
+- Log params: experiment, task_type, table, n_rows, n_features, all xgb_params
+- Train XGBClassifier, time it
+- Binary metrics: `average_precision_score`, `roc_auc_score`, `f1_score` (using `predict_proba`)
+- Multiclass metrics: `accuracy_score`, `f1_score(average='macro')`
+- Log model with `infer_signature`, print `classification_report`
 
-    train_start = time.time()
-    model = xgb.XGBClassifier(**xgb_params)
-    model.fit(X_train, y_train)
-    train_time = time.time() - train_start
-    mlflow.log_metric("train_time_sec", train_time)
-
-    y_proba = model.predict_proba(X_test)[:, 1]
-    y_pred = model.predict(X_test)
-
-    auc_pr = average_precision_score(y_test, y_proba)
-    auc_roc = roc_auc_score(y_test, y_proba)
-    f1 = f1_score(y_test, y_pred)
-
-    mlflow.log_metrics({"auc_pr": auc_pr, "auc_roc": auc_roc, "f1": f1})
-
-    sig = infer_signature(X_test.head(100), model.predict_proba(X_test.head(100)))
-    mlflow.sklearn.log_model(model, "model", signature=sig)
-
-    baseline_run_id = run.info.run_id
-    print(f"Baseline: AUC-PR={auc_pr:.4f} | AUC-ROC={auc_roc:.4f} | F1={f1:.4f}")
-    print(f"Train time: {train_time:.1f}s | Run ID: {baseline_run_id}")
-    print(classification_report(y_test, y_pred))
-```
-
-After this cell, **read metrics from MLflow API** (source of truth):
-
-```bash
-curl -s -H "Authorization: Bearer $(databricks-token)" \
-  "${DATABRICKS_HOST}/api/2.0/mlflow/runs/get?run_id=${BASELINE_RUN_ID}" \
-  | jq '.run.data.metrics[] | select(.key == "auc_pr") | .value'
-```
-
-Update best tracking: `best_auc_pr`, `best_run_id`, `best_experiment`.
+Verify metrics via MLflow API (api-reference.md). Update `best_metric_value`, `best_run_id`, `best_experiment`.
 
 Add to notebook with markdown: `## 6. Training — Baseline` with config table
 and results summary.
 
 **Upload notebook checkpoint** after baseline completes.
+
+### Sanity Check (REQUIRED after baseline — see LEARNINGS.md L16)
+
+After the baseline experiment completes, verify that the model actually learned:
+
+```python
+# Sanity check: detect pipeline bugs that produce random-chance models
+if task_type == "binary":
+    minority_ratio = y_test.sum() / len(y_test) if hasattr(y_test, 'sum') else 0.02
+    random_chance_aucpr = minority_ratio  # AUC-PR at random = class proportion
+    if metrics["auc_pr"] < max(0.1, random_chance_aucpr * 3):
+        print(f"SANITY CHECK FAILED: AUC-PR={metrics['auc_pr']:.4f} is near random chance ({random_chance_aucpr:.4f})")
+        print("This likely indicates a pipeline bug, not a hard dataset.")
+        print("Common causes:")
+        print("  - Feature column ordering mismatch between train and eval")
+        print("  - sklearn-style params passed to native xgboost.train() API")
+        print("  - Labels shuffled during Ray Data split")
+        print("  - DMatrix built with wrong feature/label mapping")
+        mlflow.log_param("sanity_check", "FAILED_near_random")
+        mlflow.log_param("sanity_check_detail", f"auc_pr={metrics['auc_pr']:.4f} < threshold={max(0.1, random_chance_aucpr * 3):.4f}")
+        # DO NOT continue to experiments 2-4 — fix the pipeline first
+        # Skip to Phase 5 with a warning
+elif task_type == "multiclass":
+    random_chance_acc = 1.0 / n_classes
+    if metrics.get("accuracy", 0) < random_chance_acc * 1.5:
+        print(f"SANITY CHECK FAILED: accuracy={metrics['accuracy']:.4f} is near random chance ({random_chance_acc:.4f})")
+        mlflow.log_param("sanity_check", "FAILED_near_random")
+```
+
+**If sanity check fails:** Do NOT run experiments 2-4. Log the failure, add a
+markdown cell documenting the issue, and go directly to Phase 5. The model
+produced garbage predictions — further hyperparameter variations will also
+produce garbage. The fix is in the data pipeline, not the model config.
 
 ## Experiment 2: Shallower trees (if budget allows)
 
@@ -143,40 +109,13 @@ Add to notebook: `## 8. Experiment 3 — Deeper Trees (depth=8, 200 rounds)`
 
 Check budget guard and progress guard.
 
-```python
-# Get feature importances from baseline
-importances = model.feature_importances_
-importance_df = pd.DataFrame({
-    "feature": X_train.columns.tolist(),
-    "importance": importances
-}).sort_values("importance", ascending=True)
-
-n_drop = int(len(X_train.columns) * 0.2)
-drop_cols = importance_df.head(n_drop)["feature"].tolist()
-X_train_pruned = X_train.drop(columns=drop_cols)
-X_test_pruned = X_test.drop(columns=drop_cols)
-
-# Retrain with pruned features
-# run_name="exp4_pruned", experiment="pruned_80pct"
-```
+Same as baseline but: drop bottom 20% features by `model.feature_importances_` from baseline. `run_name="exp4_pruned"`, `experiment="pruned_80pct"`.
 
 Add to notebook: `## 9. Experiment 4 — Feature Pruning (top 80%)`
 
 ## Results Comparison Cell
 
-After all experiments:
-
-```python
-experiment = mlflow.get_experiment_by_name(experiment_path)
-runs_df = mlflow.search_runs(
-    experiment_ids=[experiment.experiment_id],
-    order_by=["metrics.auc_pr DESC"],
-    max_results=10,
-)
-cols = ["run_id", "params.experiment", "metrics.auc_pr",
-        "metrics.auc_roc", "metrics.f1", "metrics.train_time_sec"]
-print(runs_df[[c for c in cols if c in runs_df.columns]].to_string())
-```
+Use `mlflow.search_runs()` ordered by `primary_metric DESC`. Print comparison table with run_id, experiment name, metrics, and train time.
 
 Add to notebook: `## 10. Results Comparison` with a markdown table.
 
@@ -194,3 +133,32 @@ Use the pattern from `.claude/skills/train-xgb-databricks/track-ray-distributed.
 
 The same experiment structure applies (baseline + variations), but the cell
 code is the Ray recipe instead of single-node sklearn-style.
+
+### Ray Track: Critical Differences from Single-Node (see LEARNINGS.md L16)
+
+**DO NOT copy single-node code patterns into Ray training.** The APIs are
+fundamentally different and mixing them produces silently broken models:
+
+| Aspect | Single-Node (sklearn) | Ray Distributed (native) |
+|--------|-----------------------|--------------------------|
+| API | `XGBClassifier(**params)` | `xgboost.train(params, dtrain, ...)` |
+| Learning rate param | `learning_rate=0.1` | `eta=0.1` (NOT `learning_rate`) |
+| Rounds param | `n_estimators=100` | `num_boost_round=100` (separate arg) |
+| eval_metric | `eval_metric="aucpr"` | `eval_metric=["aucpr"]` (in params dict) |
+| Feature columns | Preserved by DataFrame | Must be consistent across `shard_to_dmatrix()` calls |
+| Prediction | `model.predict_proba(X)[:, 1]` | `booster.predict(DMatrix(X))` (returns probabilities directly) |
+
+**Column ordering in `shard_to_dmatrix()`:**
+Use `sorted(c for c in batch.keys() if c != label_col)` to ensure consistent
+column ordering across all shards AND the eval DMatrix. If train uses sorted
+columns but eval uses schema-order columns, the model appears to predict randomly.
+
+**The eval DMatrix MUST use the same column ordering as train:**
+```python
+# CORRECT: Same sorted column ordering for eval
+feature_columns_sorted = sorted(feature_columns)
+X_test_eval = np.column_stack([batch[c] for c in feature_columns_sorted])
+```
+
+**The sanity check from the baseline section applies equally to Ray runs.**
+If AUC-PR < 0.1 on a binary task after Ray baseline, the pipeline is broken.
