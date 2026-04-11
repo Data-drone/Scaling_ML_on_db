@@ -1,42 +1,20 @@
 # Notebook Format Reference
 
-The autoresearch agent builds a Databricks `.py` source notebook incrementally.
-It is stored locally during the session and uploaded to the workspace periodically
-(after each phase) and at the end.
+Databricks `.py` source notebook, built incrementally. Stored locally, uploaded after each phase.
 
-## Databricks .py Source Format
+## Format Rules
 
-The first line MUST be:
-
-    # Databricks notebook source
-
-Each cell is separated by:
-
-    # COMMAND ----------
-
-Markdown cells use the `# MAGIC %md` prefix (each line):
-
-    # MAGIC %md
-    # MAGIC ## Section Title
-    # MAGIC
-    # MAGIC Some explanation text here.
-
-Pip install cells:
-
-    # MAGIC %pip install -U mlflow psutil
-
-Python restart:
-
-    # MAGIC %restart_python
+- First line: `# Databricks notebook source`
+- Cell separator: `# COMMAND ----------`
+- Markdown cells: every line prefixed with `# MAGIC` (first line `# MAGIC %md`)
+- Pip install: `# MAGIC %pip install -U mlflow psutil`
+- Python restart: `# MAGIC %restart_python`
 
 ## Local File Path
 
-Store the notebook locally at:
-
     /workspace/group/scaling_xgb_work/notebooks/autoresearch/{table_name}_{YYYYMMDD}.py
 
-Use the Write tool to create the initial skeleton and the Edit tool to append
-cells as the agent progresses through phases.
+Use Write tool for initial skeleton, Edit tool to append cells.
 
 ## Notebook Skeleton (created in Phase 2)
 
@@ -72,53 +50,24 @@ cells as the agent progresses through phases.
 
 ## Appending Cells
 
-To add a new cell to the notebook, append after the last line:
+Append after the last line of the notebook. Format (same for code and markdown):
 
 ```python
-# (blank line)
+
 # COMMAND ----------
-# (blank line)
-# cell content here
+
+# code goes here (or # MAGIC %md for markdown)
 ```
 
-For a markdown cell:
+For markdown cells, prefix every line with `# MAGIC`:
 
-```python
-# (blank line)
-# COMMAND ----------
-# (blank line)
+```
 # MAGIC %md
-# MAGIC ## New Section
+# MAGIC ## Section Title
 # MAGIC
-# MAGIC Explanation of what this section does.
+# MAGIC Explanation text.
 ```
 
-**Key principle:** Markdown cells are written AFTER the code cell runs and the
-agent sees the output. This ensures explanations describe actual outcomes, not
-just intentions.
+**Key principle:** Write markdown cells AFTER the code cell runs so explanations describe actual outcomes, not intentions.
 
-## Uploading to Workspace
-
-After each phase and at the end, upload via the Workspace Import API (see
-api-reference.md):
-
-```bash
-NB_CONTENT=$(base64 -w0 notebooks/autoresearch/{notebook_file})
-# POST to /api/2.0/workspace/import with content=${NB_CONTENT}
-```
-
-Upload path: `/Users/{user_email}/autoresearch/{table_name}_{YYYYMMDD}`
-
-Set `"overwrite": true` to update the existing notebook on each upload.
-
-## Summary Cell (Phase 5)
-
-After all experiments, use the Edit tool to replace the placeholder summary at
-the top of the notebook with the final results:
-
-- Best model metrics (AUC-PR, AUC-ROC, F1)
-- Track chosen and why
-- Feature engineering decisions
-- Experiments run and comparison table
-- Total time and cluster config
-- MLflow run ID and model registry name
+Upload notebook via Workspace Import API (api-reference.md) after each phase. Summary cell details in phase-5-finalize.md.

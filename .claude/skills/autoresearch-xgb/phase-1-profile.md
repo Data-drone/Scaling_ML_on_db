@@ -35,52 +35,19 @@ Record: column name, type classification, data type.
 
 ## Step 3: Get null percentages
 
-For each column (batch up to ~50 per query to avoid SQL length limits):
-
-```sql
-SELECT
-  SUM(CASE WHEN col_1 IS NULL THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as null_pct_col_1,
-  SUM(CASE WHEN col_2 IS NULL THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as null_pct_col_2,
-  ...
-FROM {table}
-```
+Query `SUM(CASE WHEN col IS NULL THEN 1 ELSE 0 END)*100.0/COUNT(*)` for each column, batched ~50 cols/query to avoid SQL length limits.
 
 ## Step 4: Get categorical cardinality
 
-For each categorical column (batched):
-
-```sql
-SELECT
-  COUNT(DISTINCT cat_col_1) as card_1,
-  COUNT(DISTINCT cat_col_2) as card_2,
-  ...
-FROM {table}
-```
+Query `COUNT(DISTINCT cat_col)` for each categorical column (batched).
 
 ## Step 5: Get class distribution
 
-```sql
-SELECT {target_col}, COUNT(*) as cnt
-FROM {table}
-GROUP BY {target_col}
-ORDER BY {target_col}
-```
+`SELECT {target_col}, COUNT(*) as cnt FROM {table} GROUP BY {target_col} ORDER BY {target_col}`
 
 ## Step 6: Get numeric basic stats
 
-For numeric columns (batched):
-
-```sql
-SELECT
-  MIN(num_col) as min_val,
-  MAX(num_col) as max_val,
-  AVG(num_col) as mean_val,
-  STDDEV(num_col) as std_val
-FROM {table}
-```
-
-**v1 simplification:** Skip skewness in SQL. Compute it on the cluster in
-Phase 3 after loading data — avoids complex SQL.
+Query `MIN, MAX, AVG, STDDEV` for numeric columns (batched). Skip skewness in SQL — compute on cluster in Phase 3.
 
 ## Step 7: Get sample rows
 
@@ -92,48 +59,12 @@ Useful for inspecting column names and values.
 
 ## Output
 
-Collect all results into a profile dict. Example:
-
-```python
-profile = {
-    "table": "brian_gen_ai.xgb_scaling.imbalanced_10m",
-    "target_col": "label",
-    "row_count": 10_000_000,
-    "columns": [
-        {"name": "feat_0", "type": "numeric", "null_pct": 0.0},
-        {"name": "cat_0", "type": "categorical", "null_pct": 2.1, "cardinality": 12},
-        ...
-    ],
-    "numeric_count": 200,
-    "categorical_count": 50,
-    "boolean_count": 0,
-    "class_distribution": {0: 9_500_000, 1: 500_000},
-    "sample_rows": [...],
-}
-```
-
-This profile drives Phase 2 (cluster sizing) and Phase 3 (feature decisions).
+Collect into a `profile` dict with fields: `table`, `target_col`, `row_count`, `columns` (list of {name, type, null_pct, cardinality}), `numeric_count`, `categorical_count`, `boolean_count`, `class_distribution`, `sample_rows`. This drives Phase 2 (cluster sizing) and Phase 3 (feature decisions).
 
 ## Notebook Cells
 
-Add to the notebook after this phase:
+Add to notebook (see notebook-format.md for `# MAGIC` syntax):
 
-1. **Markdown cell:** `## 1. Data Profile` with a summary table:
-
-```
-# MAGIC %md
-# MAGIC ## 1. Data Profile
-# MAGIC
-# MAGIC | Metric | Value |
-# MAGIC |--------|-------|
-# MAGIC | Table | `{table}` |
-# MAGIC | Rows | {row_count:,} |
-# MAGIC | Numeric features | {numeric_count} |
-# MAGIC | Categorical features | {categorical_count} |
-# MAGIC | Estimated raw size | {estimated_gb:.1f} GB |
-# MAGIC | Class balance | {class_0_pct:.1f}% / {class_1_pct:.1f}% |
-```
-
-2. **Code cell:** Profiling code (so notebook is reproducible when re-run)
-
-3. **Markdown cell:** Key findings and decisions for Phase 3
+1. **Markdown cell:** `## 1. Data Profile` — summary table with table name, row count, numeric/categorical counts, estimated size, class balance.
+2. **Code cell:** Profiling code (so notebook is reproducible when re-run).
+3. **Markdown cell:** Key findings and decisions for Phase 3.

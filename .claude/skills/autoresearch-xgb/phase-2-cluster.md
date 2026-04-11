@@ -34,47 +34,14 @@ Record the chosen `track`: `"single-node-cpu"`, `"single-node-highmem"`, or
 
 ## Step 3: Build cluster config JSON
 
-**Single-node CPU:**
-```json
-{
-  "cluster_name": "autoresearch-{table_name}-{YYYYMMDD-HHMM}",
-  "spark_version": "17.3.x-cpu-ml-scala2.13",
-  "node_type_id": "Standard_D16s_v5",
-  "num_workers": 0,
-  "autotermination_minutes": "{budget_minutes + 10}",
-  "data_security_mode": "SINGLE_USER",
-  "single_user_name": "{user_identity}",
-  "spark_conf": {
-    "spark.databricks.cluster.profile": "singleNode",
-    "spark.master": "local[*, 4]"
-  },
-  "custom_tags": {"ResourceClass": "SingleNode", "project": "autoresearch"},
-  "azure_attributes": {"availability": "SPOT_WITH_FALLBACK_AZURE", "spot_bid_max_price": -1}
-}
-```
+Build cluster config per api-reference.md (Create cluster). Key fields vary by track:
 
-`single_user_name` is *required* for Unity Catalog access on clusters.
-Get `user_identity` from: `curl -s -H "Authorization: Bearer $(databricks-token)" "${DATABRICKS_HOST}/api/2.0/preview/scim/v2/Me" | jq -r '.userName'`
+- **All tracks:** `cluster_name=autoresearch-{table_name}-{YYYYMMDD-HHMM}`, `spark_version=17.3.x-cpu-ml-scala2.13`, `autotermination_minutes=budget+10`, `data_security_mode=SINGLE_USER`, `single_user_name={user_identity}`, `azure_attributes` with SPOT_WITH_FALLBACK_AZURE.
+- **Single-node CPU:** `node_type_id=Standard_D16s_v5`, `num_workers=0`, spark_conf with `singleNode` profile + `local[*,4]`, tags `ResourceClass=SingleNode`.
+- **Single-node high-mem:** Same as CPU but `node_type_id=Standard_E32s_v5`.
+- **Ray distributed:** `node_type_id=Standard_D16s_v5`, `num_workers=N`, spark_conf with `OMP_NUM_THREADS=15` (no singleNode profile), tags `ResourceClass=default`.
 
-**Single-node high-mem:** Same but `"node_type_id": "Standard_E32s_v5"`.
-
-**Ray distributed:**
-```json
-{
-  "cluster_name": "autoresearch-{table_name}-{YYYYMMDD-HHMM}",
-  "spark_version": "17.3.x-cpu-ml-scala2.13",
-  "node_type_id": "Standard_D16s_v5",
-  "num_workers": "{N}",
-  "autotermination_minutes": "{budget_minutes + 10}",
-  "data_security_mode": "SINGLE_USER",
-  "single_user_name": "{user_identity}",
-  "spark_conf": {
-    "spark.executorEnv.OMP_NUM_THREADS": "15"
-  },
-  "custom_tags": {"ResourceClass": "default", "project": "autoresearch"},
-  "azure_attributes": {"availability": "SPOT_WITH_FALLBACK_AZURE", "spot_bid_max_price": -1}
-}
-```
+Get `user_identity` from SCIM API: `GET /api/2.0/preview/scim/v2/Me` (see api-reference.md).
 
 ## Step 4: Create cluster
 
@@ -88,12 +55,7 @@ Timeout after 10 minutes. If not RUNNING, report error and exit.
 
 ## Step 6: Create execution context
 
-```
-POST /api/1.2/contexts/create
-{"clusterId": "{cluster_id}", "language": "python"}
-```
-
-Save `context_id` — used for all subsequent cell executions.
+Create via Command Execution API (api-reference.md). Save `context_id` for all subsequent cell executions.
 
 ## Step 7: While waiting — scaffold notebook
 
@@ -118,20 +80,4 @@ This is used by the budget guard in Phase 4.
 
 ## Notebook Cells
 
-Add to the notebook:
-
-1. **Markdown cell:** `## 2. Cluster Configuration`
-
-```
-# MAGIC %md
-# MAGIC ## 2. Cluster Configuration
-# MAGIC
-# MAGIC | Decision | Value |
-# MAGIC |----------|-------|
-# MAGIC | Estimated data size | {raw_data_gb:.1f} GB |
-# MAGIC | With XGB overhead | {total_needed:.1f} GB |
-# MAGIC | Track chosen | {track} |
-# MAGIC | Node type | {node_type} |
-# MAGIC | Workers | {num_workers} |
-# MAGIC | Budget | {budget_minutes} min |
-```
+Add markdown cell (see notebook-format.md): `## 2. Cluster Configuration` — decision table with estimated data size, XGB overhead, track, node type, workers, budget.

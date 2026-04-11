@@ -33,45 +33,11 @@ Copy this and track progress:
 - [ ] Phase 5: FINALIZE — Clean up notebook, register model, teardown
 ```
 
-## Phase 1: PROFILE
-
-See [phase-1-profile.md](phase-1-profile.md).
-
-Run SQL queries via the SQL Statement API against a warehouse to collect row
-count, column types, cardinality, nulls, class distribution, and basic stats.
-No cluster needed.
-
-## Phase 2: SIZE & CREATE
-
-See [phase-2-cluster.md](phase-2-cluster.md).
-
-Estimate memory from profile, pick cluster config from decision table, create
-cluster via REST API, wait for RUNNING, create execution context. While waiting,
-scaffold the notebook skeleton locally.
-
-## Phase 3: FEATURE ENGINEERING
-
-See [phase-3-features.md](phase-3-features.md).
-
-Run cells on the live cluster to load data, encode categoricals, handle nulls,
-detect skew, cap feature count, split train/test. Each step is a code cell with
-markdown explanation. Upload notebook to workspace after this phase (crash
-recovery checkpoint).
-
-## Phase 4: TRAIN & EVALUATE
-
-See [phase-4-train.md](phase-4-train.md).
-
-Run baseline XGBoost, then 1-2 variations if budget allows. Read metrics from
-MLflow API. Stop early if no improvement after 2 experiments. Upload notebook
-after each training run.
-
-## Phase 5: FINALIZE
-
-See [phase-5-finalize.md](phase-5-finalize.md).
-
-Compare results, register best model to UC, add summary to notebook top, upload
-final notebook, terminate cluster, report to user.
+## Phase 1: PROFILE — See [phase-1-profile.md](phase-1-profile.md). SQL profiling (no cluster needed).
+## Phase 2: SIZE & CREATE — See [phase-2-cluster.md](phase-2-cluster.md). Memory estimate → cluster config → create & wait.
+## Phase 3: FEATURE ENG — See [phase-3-features.md](phase-3-features.md). Load, auto-detect types, encode, nulls, split. Upload checkpoint.
+## Phase 4: TRAIN — See [phase-4-train.md](phase-4-train.md). Baseline + variations with budget/progress guards. MLflow tracking.
+## Phase 5: FINALIZE — See [phase-5-finalize.md](phase-5-finalize.md). Register model, summary notebook, terminate cluster, report.
 
 ## References
 
