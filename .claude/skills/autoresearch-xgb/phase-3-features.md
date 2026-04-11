@@ -6,167 +6,54 @@ Run interactive cells on the live cluster to prepare features for training.
 
 ## How to Run a Cell
 
-For every code cell in this phase:
-
-1. Write the Python code to a temp file (`/tmp/cell_N.py`)
-2. JSON-encode it and send via Command Execution API (see api-reference.md)
-3. Poll until `Finished` or `Error`
-4. Read output from `results.data` (text) or `results.cause` (error)
-5. If Error: try to fix the code and retry once. If still fails, add a markdown
-   cell documenting the error and move on.
-6. Append the code cell + a markdown explanation cell to the local notebook file
+Execute cells via Command Execution API (api-reference.md). On error, retry once with fix; if still fails, log error in markdown cell and continue. Append each code cell + markdown explanation to notebook.
 
 ## Cell 1: Imports and setup
 
-Run on cluster:
-
-```python
-import os, sys, time, psutil
-import pandas as pd
-import numpy as np
-os.environ["MLFLOW_ENABLE_SYSTEM_METRICS_LOGGING"] = "true"
-import mlflow
-mlflow.set_registry_uri("databricks-uc")
-user_email = spark.sql("SELECT current_user()").collect()[0][0]
-experiment_path = f"/Users/{user_email}/autoresearch"
-mlflow.set_experiment(experiment_path)
-available_ram_gb = psutil.virtual_memory().available / 1e9
-print(f"MLflow experiment: {experiment_path}")
-print(f"Available RAM: {available_ram_gb:.1f} GB")
-print(f"CPU cores: {os.cpu_count()}")
-```
-
-Record `available_ram_gb` and `experiment_path` from the output.
+Import pandas, numpy, psutil, mlflow. Set `MLFLOW_ENABLE_SYSTEM_METRICS_LOGGING=true` (before mlflow import). `mlflow.set_registry_uri("databricks-uc")`. Get user email via `spark.sql("SELECT current_user()")`. Set MLflow experiment to `/Users/{email}/autoresearch`. Print available RAM and CPU count. Record `available_ram_gb` and `experiment_path` from output.
 
 Add to notebook with markdown: `## 3. Environment Setup`
 
 ## Cell 2: Load data
 
-**For single-node tracks:**
+**Single-node:** `df = spark.table("{table}").toPandas()`. Time it, print row/col count, memory usage, remaining RAM.
+**Ray distributed:** Just verify table access (`spark.table("{table}").count()`) — actual loading happens in Phase 4.
 
-```python
-load_start = time.time()
-df = spark.table("{table}").toPandas()
-load_time = time.time() - load_start
-mem_gb = df.memory_usage(deep=True).sum() / 1e9
-print(f"Loaded {len(df):,} rows x {len(df.columns)} cols in {load_time:.1f}s")
-print(f"Memory usage: {mem_gb:.2f} GB")
-print(f"Available RAM: {psutil.virtual_memory().available / 1e9:.1f} GB")
-```
-
-**For Ray distributed track:** Data loading happens in Phase 4 inside the Ray
-training function. In Phase 3, just verify the table is accessible:
-
-```python
-row_count = spark.table("{table}").count()
-cols = spark.table("{table}").columns
-print(f"Table verified: {row_count:,} rows, {len(cols)} columns")
-```
-
-**Runtime memory check:** Parse memory usage from output. If usage > 80% of
-available RAM, add a warning markdown cell. Do NOT abort — just document it.
+**Runtime memory check:** If memory usage > 80% available RAM, add warning markdown cell. Do NOT abort.
 
 Add to notebook with markdown: `## 4. Data Loading`
 
+## Cell 2.5: Auto-detect string-typed numerics and datetimes
+
+For each string column (excl target): sample 200 non-null values. Try numeric first: strip `$`, commas, `%`, whitespace via regex `[\$,\s%]` then `pd.to_numeric`; if >80% success, convert whole column. Then try datetime: `pd.to_datetime(format='mixed')`; if >80% success, extract `hour`/`dayofweek`/`month` features and drop original column.
+
+Print summary of conversions. After this cell, string column lists will have changed.
+
 ## Cell 3: Handle categoricals
 
-Build this cell dynamically from the profile (Phase 1 cardinality data):
-
-```python
-# Categoricals to ENCODE (cardinality < 50): {list from profile}
-# Categoricals to DROP (cardinality >= 50): {list from profile}
-
-cols_to_drop = [{high_cardinality_cols}]
-if cols_to_drop:
-    df = df.drop(columns=cols_to_drop)
-    print(f"Dropped {len(cols_to_drop)} high-cardinality columns: {cols_to_drop}")
-
-cat_cols = [{low_cardinality_cols}]
-if cat_cols:
-    from sklearn.preprocessing import OrdinalEncoder
-    enc = OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1)
-    df[cat_cols] = enc.fit_transform(df[cat_cols])
-    print(f"Ordinal-encoded {len(cat_cols)} categorical columns")
-```
-
-Add to notebook with markdown explaining encoding decisions and cardinality
-thresholds.
+Drop high-cardinality columns (>=50 unique). OrdinalEncoder on low-cardinality (<50) with `handle_unknown='use_encoded_value'`, `unknown_value=-1`. Build column lists dynamically from Phase 1 profile.
 
 ## Cell 4: Handle booleans and types
 
-```python
-bool_cols = [{boolean_cols_from_profile}]
-for col in bool_cols:
-    df[col] = df[col].astype(int)
-if bool_cols:
-    print(f"Cast {len(bool_cols)} boolean columns to int")
-
-# Drop timestamp columns (not supported by XGBoost)
-ts_cols = [{timestamp_cols_from_profile}]
-if ts_cols:
-    df = df.drop(columns=ts_cols)
-    print(f"Dropped {len(ts_cols)} timestamp columns: {ts_cols}")
-
-feature_cols = [c for c in df.columns if c != "{target_col}"]
-print(f"Features after type handling: {len(feature_cols)}")
-```
+Cast boolean cols to int. Drop timestamp cols (not supported by XGBoost). Recompute `feature_cols = [c for c in df.columns if c != target_col]`.
 
 ## Cell 5: Handle nulls
 
-```python
-null_pcts = df[feature_cols].isnull().mean()
-high_null_cols = null_pcts[null_pcts > 0.5].index.tolist()
-if high_null_cols:
-    df = df.drop(columns=high_null_cols)
-    feature_cols = [c for c in feature_cols if c not in high_null_cols]
-    print(f"Dropped {len(high_null_cols)} high-null columns (>50%): {high_null_cols}")
-
-null_remaining = df[feature_cols].isnull().sum().sum()
-if null_remaining > 0:
-    df[feature_cols] = df[feature_cols].fillna(df[feature_cols].median())
-    print(f"Imputed {null_remaining:,} remaining null values with median")
-else:
-    print("No nulls remaining")
-```
+Drop columns with >50% null. Impute remaining nulls with median.
 
 ## Cell 6: Feature count guardrail
 
-```python
-if len(feature_cols) > 1000:
-    variances = df[feature_cols].var().sort_values()
-    n_drop = len(feature_cols) - 1000
-    low_var_cols = variances.head(n_drop).index.tolist()
-    df = df.drop(columns=low_var_cols)
-    feature_cols = [c for c in feature_cols if c not in low_var_cols]
-    print(f"Dropped {n_drop} lowest-variance features to cap at 1000")
+If features > 1000, drop lowest-variance columns to cap at 1000.
 
-print(f"Final feature count: {len(feature_cols)}")
-```
+## Cell 7: Target encoding, class balance, and train/test split
 
-## Cell 7: Class balance and train/test split
+Drop null targets. LabelEncoder for string targets (object/string dtype). Detect binary (2 classes, compute `scale_pos_weight = count_class0 / count_class1`) vs multiclass (>2 classes). Set `task_type` to `"binary"` or `"multiclass"`.
 
-```python
-from sklearn.model_selection import train_test_split
+Stratified 80/20 split (`train_test_split` with `stratify=y`); fall back to non-stratified if minority class has < 2 samples (catches ValueError).
 
-X = df[sorted(feature_cols)]
-y = df["{target_col}"]
+Outputs: `X_train`, `X_test`, `y_train`, `y_test`, `task_type`, `scale_pos_weight`, `n_classes`.
 
-class_counts = y.value_counts().sort_index()
-scale_pos_weight = float(class_counts.iloc[0] / class_counts.iloc[1])
-minority_pct = class_counts.min() / len(y) * 100
-
-print(f"Class distribution: { {k: v for k, v in class_counts.items()} }")
-print(f"Minority class: {minority_pct:.1f}%")
-print(f"scale_pos_weight: {scale_pos_weight:.2f}")
-
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42, stratify=y
-)
-print(f"Train: {len(X_train):,} | Test: {len(X_test):,}")
-```
-
-Add to notebook with markdown: `## 5. Feature Engineering` followed by
-subsections for each transform.
+Add to notebook with markdown: `## 5. Feature Engineering` with subsections for each transform.
 
 ## Checkpoint: Upload notebook
 

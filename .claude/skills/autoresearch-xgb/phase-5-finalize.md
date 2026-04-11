@@ -4,14 +4,7 @@ Compare results, register the best model, finalize the notebook, and tear down.
 
 ## Step 1: Pick the winner
 
-From the experiments tracked in Phase 4, identify the run with the highest
-AUC-PR. Verify via MLflow API (source of truth):
-
-```bash
-curl -s -H "Authorization: Bearer $(databricks-token)" \
-  "${DATABRICKS_HOST}/api/2.0/mlflow/runs/get?run_id=${BEST_RUN_ID}" \
-  | jq '.run.data.metrics'
-```
+From the experiments tracked in Phase 4, identify the run with the highest primary metric. Verify via MLflow API (api-reference.md).
 
 ## Step 2: Register best model to Unity Catalog
 
@@ -34,75 +27,19 @@ Add to notebook: `## 11. Model Registration` with UC model path and version.
 
 ## Step 3: Update notebook summary
 
-Use the Edit tool to replace the placeholder summary at the top of the local
-notebook file. Replace the line:
+Use the Edit tool to replace `_Summary will be added after experiments complete._` at the top of the notebook with (see notebook-format.md for `# MAGIC` syntax):
 
-    _Summary will be added after experiments complete._
-
-With the full results summary:
-
-```
-# MAGIC ## Results Summary
-# MAGIC
-# MAGIC | Experiment | AUC-PR | AUC-ROC | F1 | Train Time |
-# MAGIC |------------|--------|---------|-----|------------|
-# MAGIC | Baseline   | {baseline_auc_pr:.4f} | {baseline_auc_roc:.4f} | {baseline_f1:.4f} | {baseline_time:.1f}s |
-# MAGIC | Exp 2      | {exp2_auc_pr:.4f} | ... | ... | ... |
-# MAGIC | ...        | ... | ... | ... | ... |
-# MAGIC
-# MAGIC **Best model:** {best_experiment} (AUC-PR: {best_auc_pr:.4f})
-# MAGIC **Registered as:** `{uc_model_name}` v{version}
-# MAGIC **MLflow run:** `{best_run_id}`
-# MAGIC
-# MAGIC ## Decisions Made
-# MAGIC
-# MAGIC - **Track:** {track} — {reason}
-# MAGIC - **Cluster:** {node_type} × {num_workers} workers ({total_ram} GB RAM)
-# MAGIC - **Features:** {n_final_features} used (dropped {n_high_card} high-cardinality, {n_high_null} high-null)
-# MAGIC - **Encoded:** {n_encoded} categorical columns via ordinal encoding
-# MAGIC - **Imbalance:** scale_pos_weight = {spw:.2f}
-# MAGIC - **Total time:** {total_minutes:.1f} minutes (budget: {budget_minutes} min)
-```
+- **Results Summary** table: Experiment | primary metric | secondary metrics | Train Time
+- **Best model:** name, metric value, UC model name + version, MLflow run ID
+- **Decisions Made:** track + reason, cluster config, feature counts/drops, encoding, imbalance handling, total time vs budget
 
 ## Step 4: Upload final notebook
 
-Upload the completed notebook to the workspace:
-
-```bash
-NB_CONTENT=$(base64 -w0 /workspace/group/scaling_xgb_work/notebooks/autoresearch/{notebook_file})
-
-curl -s -X POST \
-  -H "Authorization: Bearer $(databricks-token)" \
-  -H "Content-Type: application/json" \
-  "${DATABRICKS_HOST}/api/2.0/workspace/import" \
-  -d "{
-    \"path\": \"/Users/{user_email}/autoresearch/{table_name}_{YYYYMMDD}\",
-    \"format\": \"SOURCE\",
-    \"language\": \"PYTHON\",
-    \"content\": \"${NB_CONTENT}\",
-    \"overwrite\": true
-  }"
-```
+Upload via Workspace Import API (api-reference.md). Path: `/Users/{user_email}/autoresearch/{table_name}_{YYYYMMDD}`.
 
 ## Step 5: Terminate cluster
 
-```bash
-curl -s -X POST \
-  -H "Authorization: Bearer $(databricks-token)" \
-  -H "Content-Type: application/json" \
-  "${DATABRICKS_HOST}/api/2.0/clusters/delete" \
-  -d "{\"cluster_id\": \"${CLUSTER_ID}\"}"
-```
-
-Verify termination:
-
-```bash
-curl -s -H "Authorization: Bearer $(databricks-token)" \
-  "${DATABRICKS_HOST}/api/2.0/clusters/get?cluster_id=${CLUSTER_ID}" \
-  | jq -r '.state'
-```
-
-Expected: `TERMINATING` or `TERMINATED`.
+Terminate via Clusters API (api-reference.md). Verify state is `TERMINATING` or `TERMINATED`.
 
 ## Step 6: Report to user
 
