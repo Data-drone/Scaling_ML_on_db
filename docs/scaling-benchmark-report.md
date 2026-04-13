@@ -24,9 +24,12 @@ comparing single-node CPU, Ray Data distributed, SparkXGB, and GPU training acro
 5. **SparkXGBClassifier works but is slow.** Corrected v2 with `n_estimators=200` + `spark.task.cpus=16`
    trained 30M in 342s (comparable to Ray's 277s), but total time is 2.4× worse (846s vs 350s)
    due to VectorAssembler and Spark scheduling overhead.
-6. **Spot VMs are unreliable for long training.** A 100M spot run lost a node to eviction after 17 min.
+6. **Distributed GPU (Ray Data + V100) is slower than CPU at 10-30M.** 10M GPU took 592s vs 303s CPU;
+   30M GPU took 472s vs 292s CPU. CUDA init overhead, GPU memory management, and fewer-than-requested
+   executors (4-5 of 8) negate any GPU compute advantage. Also 3-8× more expensive per run.
+7. **Spot VMs are unreliable for long training.** A 100M spot run lost a node to eviction after 17 min.
    All production benchmarks should use ON_DEMAND.
-7. **OOM failures are informative.** 30M rows × 250 features × 8 bytes = 56GB raw, but toPandas()
+8. **OOM failures are informative.** 30M rows × 250 features × 8 bytes = 56GB raw, but toPandas()
    peak reaches ~168GB+. Even 256GB (E32s) and 224GB (NC12s) are insufficient.
 
 ## Benchmark Matrix
@@ -54,6 +57,8 @@ comparing single-node CPU, Ray Data distributed, SparkXGB, and GPU training acro
 | Ray Data 8W D16s | 30M | 30M | 250 | D16s_v5 | 64GB | — | 8 | 291 | 292 | 1.0 | OK (read_databricks_tables) |
 | Ray Data 4W D16s | 10M | 10M | 250 | D16s_v5 | 64GB | — | 4 | 172 | 303 | 0.03 | OK (notebook-fixes branch) |
 | Ray Data 8W E16s | 100M | 100M | 400 | E16s_v5 | 128GB | — | 8 | 660 | 775 | 0.15 | OK (ON_DEMAND) |
+| Ray GPU 5W V100 | 10M | 10M | 250 | NC6s_v3 | 112GB | V100 | 5 | 289 | 592 | 0.03 | OK (device=cuda) |
+| Ray GPU 4W V100 | 30M | 30M | 250 | NC6s_v3 | 112GB | V100 | 4 | 282 | 472 | 0.03 | OK (device=cuda) |
 
 ### Failed Runs (OOM / Partial)
 
@@ -144,6 +149,43 @@ Direct-parquet path:  Arrow + Pandas              = ~112 GB peak (30M)
 **Takeaway:** Direct-parquet is a clear win for 10M GPU workflows. For 30M, it doesn't solve the
 DMatrix OOM. For 30M on GPU, you'd need ~300GB+ system RAM or a streaming/chunked approach.
 
+### 3b. Distributed GPU (Ray Data + V100): Slower Than CPU
+
+Ray Data GPU training distributes data across multiple V100 GPUs via `read_databricks_tables` →
+`DataParallelTrainer(use_gpu=True)` with `device="cuda"`. Each worker builds a local DMatrix and
+trains on GPU.
+
+**Results:**
+
+| Config | Dataset | Workers | GPUs | Train(s) | Total(s) | vs CPU Total |
+|--------|---------|---------|------|----------|----------|-------------|
+| Ray GPU 5W V100 | 10M | 5 | 5×V100 | 289 | 592 | 1.95× slower (vs 303s CPU) |
+| Ray GPU 4W V100 | 30M | 4 | 4×V100 | 282 | 472 | 1.62× slower (vs 292s CPU) |
+
+**Why GPU is slower at these scales:**
+
+1. **CUDA initialization overhead:** Each worker must initialize CUDA context (~10-30s per worker).
+2. **GPU memory management:** DMatrix-to-GPU transfer adds per-round overhead that doesn't exist in CPU `hist`.
+3. **Fewer workers than requested:** Only 4-5 of 8 requested executors registered on NC6s_v3 clusters,
+   reducing parallelism. This may be due to slow GPU node provisioning or Spark executor registration
+   timeouts on GPU ML Runtime.
+4. **CPU `hist` is already fast:** XGBoost's CPU histogram method is highly optimized. At 10-30M rows
+   per worker shard (1.25-7.5M per worker), CPU training is I/O-bound, not compute-bound.
+
+**Cost comparison (GPU vs CPU):**
+
+| Config | $/hr | Runtime | Cost | vs CPU |
+|--------|------|---------|------|--------|
+| Ray Data CPU 8W D16s (30M) | $9.00 | 292s | $0.73 | baseline |
+| Ray Data GPU 4W V100 (30M) | $15.90 | 472s | $2.08 | 2.8× more expensive |
+| Ray Data CPU 4W D16s (10M) | $5.00 | 303s | $0.42 | baseline |
+| Ray Data GPU 5W V100 (10M) | $19.88 | 592s | $3.27 | 7.8× more expensive |
+
+**Takeaway:** Distributed GPU via Ray Data is *not cost-effective* for XGBoost at 10-30M scale.
+GPU XGBoost becomes worthwhile when (a) data is large enough that GPU compute dominates initialization
+overhead, and (b) GPU memory can hold the per-worker shard. The crossover likely starts at 100M+ rows
+with fewer, larger GPU nodes (e.g., A100 with 40/80GB VRAM).
+
 ### 4. SparkXGBClassifier: Works but Has Gotchas
 
 SparkXGBClassifier (`xgboost.spark`) trains directly on Spark DataFrames with zero conversion.
@@ -227,32 +269,60 @@ Memory usage peaked at 33% per E16s worker (~42 GB of 128 GB), leaving substanti
 Without all three, XGBoost spawns threads×workers processes that thrash the CPU. This was the root
 cause of early Ray performance issues.
 
-### 6. Cost Efficiency (Approximate)
+### 6. Cost Efficiency
 
-Assuming Azure pay-as-you-go pricing (US East 2). Cluster costs include driver + workers.
+Azure pay-as-you-go pricing (US East 2, Linux) with Databricks Jobs Compute DBU markup (~1.3× VM cost).
+Cluster cost = (VM $/hr × nodes × 1.3) × (runtime / 3600).
 
-| Config | $/hr (approx) | Runtime | Est. Cost |
-|--------|--------------|---------|-----------|
-| Single E16s (10M) | $1.20 | 186s | $0.06 |
-| Single E32s (10M) | $2.40 | 115s | $0.08 |
-| GPU V100 NC6s toPandas (10M) | $3.30 | 791s | $0.73 |
-| GPU V100 NC6s direct (10M) | $3.30 | 375s | $0.34 |
-| Ray 4W D16s (10M) | $4.80 | 128s | $0.17 |
-| Ray Data 4W D16s (10M) | $4.80 | 303s | $0.40 |
-| Ray 8W D16s (30M) | $9.60 | 350s | $0.93 |
-| Ray Data 8W D16s (30M) | $9.60 | 292s | $0.78 |
-| SparkXGB v2 4W D16s (30M) | $4.80 | 846s | $1.13 |
-| SparkXGB 8W D16s (100M) | $9.60 | 4579s | $12.21 |
-| Ray Data 8W E16s (100M) | $14.40 | 775s | $3.10 |
+**Per-VM hourly rates (base + DBU):**
+
+| VM | vCPUs | RAM | GPU | VM $/hr | With DBU |
+|----|-------|-----|-----|---------|----------|
+| D8s_v5 | 8 | 32GB | — | $0.38 | $0.50 |
+| D16s_v5 | 16 | 64GB | — | $0.77 | $1.00 |
+| E16s_v5 | 16 | 128GB | — | $1.01 | $1.31 |
+| E32s_v5 | 32 | 256GB | — | $2.02 | $2.62 |
+| NC6s_v3 | 6 | 112GB | V100 | $3.06 | $3.98 |
+
+**Cost per completed run (sorted by dataset then cost):**
+
+*10M rows:*
+
+| Config | Nodes | $/hr | Runtime | Cost |
+|--------|-------|------|---------|------|
+| Single E16s | 1 | $1.31 | 186s | $0.07 |
+| Single E32s | 1 | $2.62 | 115s | $0.08 |
+| Ray 4W D16s | 5 | $5.00 | 128s | $0.18 |
+| Ray 4W E16s | 5 | $6.55 | 126s | $0.23 |
+| GPU V100 direct | 1 | $3.98 | 375s | $0.41 |
+| Ray Data 4W D16s | 5 | $5.00 | 303s | $0.42 |
+| SparkXGB v2 E16s | 2 | $2.62 | 1102s | $0.80 |
+| GPU V100 toPandas | 1 | $3.98 | 791s | $0.87 |
+| Ray GPU 5W V100 | 6 | $23.85 | 592s | $3.92 |
+
+*30M rows:*
+
+| Config | Nodes | $/hr | Runtime | Cost |
+|--------|-------|------|---------|------|
+| Ray Data 8W D16s | 9 | $9.00 | 292s | $0.73 |
+| Ray 8W D16s | 9 | $9.00 | 350s | $0.87 |
+| SparkXGB v2 4W D16s | 5 | $5.00 | 846s | $1.17 |
+| Ray GPU 4W V100 | 5 | $19.88 | 472s | $2.61 |
+
+*100M rows:*
+
+| Config | Nodes | $/hr | Runtime | Cost |
+|--------|-------|------|---------|------|
+| Ray Data 8W E16s | 9 | $11.79 | 775s | $2.54 |
+| SparkXGB 8W D16s | 9 | $9.00 | 4579s | $11.43 |
 
 **Key cost insights:**
-- *100M:* Ray Data ($3.10) is 3.9× cheaper than SparkXGB ($12.21), despite using more expensive E16s nodes.
-  The 5.9× speed advantage more than compensates for the higher per-hour cost.
-- *30M:* Ray Data ($0.78) is the cheapest successful approach. Ray toPandas ($0.93) and SparkXGB v2 ($1.13) are more expensive.
-- *10M:* Single-node E16s ($0.06) is cheapest for small data. Ray Data ($0.40) is more expensive at this scale due to cluster overhead.
-
-E16s_v5 pricing: ~$1.20/hr per node × 9 nodes (driver + 8 workers) = ~$10.80/hr + Databricks DBU markup ≈ $14.40/hr.
-D16s_v5 pricing: ~$0.60/hr per node × 9 nodes = ~$5.40/hr + DBU markup ≈ $9.60/hr (estimated).
+- *100M:* Ray Data ($2.54) is *4.5× cheaper* than SparkXGB ($11.43), despite using more expensive E16s nodes.
+  The 5.9× speed advantage more than compensates for the higher per-hour rate.
+- *30M:* Ray Data ($0.73) is the cheapest successful approach. SparkXGB v2 ($1.17) is 60% more expensive.
+- *10M:* Single-node E16s ($0.07) is cheapest. Distributed approaches are 3-12× more expensive at this scale.
+- *GPU clusters are expensive per hour* ($35.80/hr for 9× V100 nodes). Only worthwhile if training
+  speedup is dramatic enough to offset the per-hour premium. Results pending from Ray GPU benchmarks.
 
 ### 7. Data Quality Note
 
@@ -410,6 +480,17 @@ num_workers: 0
 # NC6s_v3 (V100), NC4as_T4_v3 (T4), NC12s_v3 (2×V100), NC16as_T4_v3 (4×T4)
 ```
 
+### GPU Distributed (Ray Data + V100)
+```yaml
+spark_version: 16.2.x-gpu-ml-scala2.12
+spark_conf:
+  spark.executorEnv.OMP_NUM_THREADS: "5"
+  spark.databricks.delta.optimizeWrite.enabled: "true"
+data_security_mode: SINGLE_USER
+num_workers: 8  # Standard_NC6s_v3 (1×V100, 6 cores, 112GB RAM each)
+# NC6s_v3 (V100), NC4as_T4_v3 (T4), NC12s_v3 (2×V100), NC16as_T4_v3 (4×T4)
+```
+
 ## Appendix: Raw Data
 
 All run data is tracked in MLflow experiment 3191770590499292 and archived in
@@ -444,3 +525,5 @@ All run data is tracked in MLflow experiment 3191770590499292 and archived in
 | 10m_raydata_4w | 10M | Ray Data | D16s_v5 | 4 | 70 | 172 | 303 | 0.03 | OK (notebook-fixes branch) |
 | 100m_raydata_8w | 100M | Ray Data | E16s_v5 | 8 | 27 | 660 | 775 | 0.15 | OK (ON_DEMAND, 5.9× vs SparkXGB) |
 | 100m_raydata_8w_spot | 100M | Ray Data | E16s_v5 | 8 | 138 | — | — | — | FAILED (spot eviction after ~17 min) |
+| 10m_raygpu_5w_v100 | 10M | Ray Data GPU | NC6s_v3 | 5 | — | 289 | 592 | 0.03 | OK (device=cuda, 5/8 executors) |
+| 30m_raygpu_4w_v100 | 30M | Ray Data GPU | NC6s_v3 | 4 | — | 282 | 472 | 0.03 | OK (device=cuda, 4/8 executors) |
