@@ -321,8 +321,8 @@ Cluster cost = (VM $/hr × nodes × 1.3) × (runtime / 3600).
   The 5.9× speed advantage more than compensates for the higher per-hour rate.
 - *30M:* Ray Data ($0.73) is the cheapest successful approach. SparkXGB v2 ($1.17) is 60% more expensive.
 - *10M:* Single-node E16s ($0.07) is cheapest. Distributed approaches are 3-12× more expensive at this scale.
-- *GPU clusters are expensive per hour* ($35.80/hr for 9× V100 nodes). Only worthwhile if training
-  speedup is dramatic enough to offset the per-hour premium. Results pending from Ray GPU benchmarks.
+- *GPU clusters are expensive per hour* ($35.80/hr for 9× V100 nodes). Confirmed not cost-effective
+  at 10-30M scale — GPU runs were 1.6-2× slower and 3-8× more expensive than CPU equivalents.
 
 ### 7. Data Quality Note
 
