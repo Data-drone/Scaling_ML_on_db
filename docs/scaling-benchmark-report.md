@@ -53,7 +53,7 @@ comparing single-node CPU, Ray Data distributed, SparkXGB, and GPU training acro
 | SparkXGB v2 E16s | 10M | 10M | 250 | E16s_v5 | 128GB | — | 1 | 303 | 1102 | 1.0 | v2 (corrected) |
 | SparkXGB v2 4W D16s | 30M | 30M | 250 | D16s_v5 | 256GB | — | 4 | 342 | 846 | 1.0 | v2 (corrected) |
 | GPU Direct V100 | 10M | 10M | 250 | NC6s_v3 | 112GB | V100 | 0 | 29 | 375 | 1.0 | OK (direct-parquet) |
-| SparkXGB 8W D16s | 100M | 100M | 501 | D16s_v5 | 64GB | — | 8 | 4067 | 4579 | 1.0 | OK |
+| SparkXGB v2 8W D16s | 100M | 100M | 501 | D16s_v5 | 64GB | — | 8 | 4067 | 4579 | 1.0 | v2 (n_estimators=200 task.cpus=16) |
 | Ray Data 8W D16s | 30M | 30M | 250 | D16s_v5 | 64GB | — | 8 | 291 | 292 | 1.0 | OK (read_databricks_tables) |
 | Ray Data 4W D16s | 10M | 10M | 250 | D16s_v5 | 64GB | — | 4 | 172 | 303 | 0.03 | OK (notebook-fixes branch) |
 | Ray Data 8W E16s | 100M | 100M | 400 | E16s_v5 | 128GB | — | 8 | 660 | 775 | 0.15 | OK (ON_DEMAND) |
@@ -314,7 +314,7 @@ Cluster cost = (VM $/hr × nodes × 1.3) × (runtime / 3600).
 | Config | Nodes | $/hr | Runtime | Cost |
 |--------|-------|------|---------|------|
 | Ray Data 8W E16s | 9 | $11.79 | 775s | $2.54 |
-| SparkXGB 8W D16s | 9 | $9.00 | 4579s | $11.43 |
+| SparkXGB v2 8W D16s | 9 | $9.00 | 4579s | $11.43 |
 
 **Key cost insights:**
 - *100M:* Ray Data ($2.54) is *4.5× cheaper* than SparkXGB ($11.43), despite using more expensive E16s nodes.
@@ -520,7 +520,7 @@ All run data is tracked in MLflow experiment 3191770590499292 and archived in
 | 10m_sparkxgb_v2 | 10M | SparkXGB v2 | E16s_v5 | 1 | — | 303 | 1102 | 1.0 | v2 (corrected) |
 | 30m_sparkxgb_v2_4w | 30M | SparkXGB v2 | D16s_v5 | 4 | — | 342 | 846 | 1.0 | v2 (corrected) |
 | 10m_gpu_direct_v100 | 10M | Direct+GPU | NC6s_v3 | 0 | 236 | 29 | 375 | 1.0 | OK (2.1× vs toPandas) |
-| 100m_sparkxgb_8w | 100M | SparkXGB | D16s_v5 | 8 | 3 | 4067 | 4579 | 1.0 | OK (n_estimators=200 spark.task.cpus=16) |
+| 100m_sparkxgb_8w | 100M | SparkXGB v2 | D16s_v5 | 8 | 3 | 4067 | 4579 | 1.0 | v2 (n_estimators=200, spark.task.cpus=16) |
 | 30m_raydata_8w | 30M | Ray Data | D16s_v5 | 8 | 61 | 291 | 292 | 1.0 | OK (read_databricks_tables) |
 | 10m_raydata_4w | 10M | Ray Data | D16s_v5 | 4 | 70 | 172 | 303 | 0.03 | OK (notebook-fixes branch) |
 | 100m_raydata_8w | 100M | Ray Data | E16s_v5 | 8 | 27 | 660 | 775 | 0.15 | OK (ON_DEMAND, 5.9× vs SparkXGB) |
