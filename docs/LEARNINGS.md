@@ -342,6 +342,27 @@ Azure subscriptions have per-family GPU core quotas. On this workspace:
 
 **To check quota:** Use the Databricks `clusters/list-node-types` API — `node_info.available_core_quota` shows remaining cores per family.
 
+### L18: Concurrent GPU clusters cause Azure quota contention (partial executor registration)
+
+**Severity:** High — silently degrades training performance
+**Track:** Ray GPU
+**Date discovered:** 2026-04-15
+**Status:** RESOLVED — root cause identified
+
+**Problem:**
+GPU benchmark runs showed only 4-5 of 8 requested workers registering. This appeared to be a Spark/Ray executor registration issue on GPU ML Runtime, but was actually Azure quota contention.
+
+**Root Cause:**
+Two GPU benchmark jobs (10M and 30M) were submitted simultaneously, each requesting 8 workers + 1 driver = 9× NC6s_v3 = 54 vCPUs. Combined need: 108 cores. Available NCsv3 quota: 100 cores.
+
+**Evidence from cluster event logs:**
+- **10M cluster:** Started with 5 workers (quota allowed 36 cores initially). AUTORECOVERY eventually scaled to 8 after 30M cluster stabilized.
+- **30M cluster:** Started with 4 workers. Resize to 8 failed: `AZURE_QUOTA_EXCEEDED_EXCEPTION` — "Current Usage: 96, Additional Required: 18, New Limit Required: 114". Stuck at 4-5 workers for entire run.
+
+**Fix:** Run GPU benchmarks sequentially, not concurrently. Alternatively, request ≤6 workers per cluster (7 nodes × 6 vCPUs = 42 cores; two clusters = 84 < 100 quota).
+
+**Key insight:** Databricks does NOT fail the job when Azure can't provision all requested workers. Instead, it starts the cluster with partial workers, begins the notebook, then attempts auto-recovery in the background. The notebook's `sc._jsc.sc().getExecutorMemoryStatus().size() - 1` captures whatever partial count is available at that moment.
+
 ---
 
 ## Open Questions / Future Learnings
@@ -352,7 +373,7 @@ Azure subscriptions have per-family GPU core quotas. On this workspace:
 
 ### Q2: GPU XGBoost scaling characteristics?
 - **Hypothesis:** GPU-based XGBoost (`device: "cuda"`) has different scaling — GPU memory is the constraint, not CPU.
-- **Status:** In progress — Ray Data GPU notebook created (`train_xgb_ray_gpu.ipynb`). 10M and 30M benchmarks running on 8× NC6s_v3 (V100).
+- **Status:** Partially answered. GPU is NOT cost-effective at 10-30M scale (1.6-2× slower, 3-8× more expensive than CPU). Results were further degraded by concurrent cluster quota contention (L18) — only 4-5 of 8 workers were available. A re-run with full 8 workers (sequential launch) might improve GPU times but unlikely to beat CPU at these scales. GPU may become competitive at 100M+ where CPU clusters need more nodes.
 
 ### Q3: Can we get super-linear speedup at larger data sizes?
 - **Hypothesis:** The super-linear speedup (L4) disappears at very large data sizes where all configurations exceed cache.
