@@ -191,7 +191,7 @@ All datasets use 5% minority class (95/5 split). This is deliberate:
 
 - ML Runtime: `17.3.x-cpu-ml-scala2.13` (includes Ray 2.37.0, XGBoost 2.1.x)
 - Non-ML runtime: `17.3.x-scala2.13` (for data generation only)
-- GPU runtime: `17.3.x-gpu-ml-scala2.13` (not yet tested)
+- GPU runtime: `16.2.x-gpu-ml-scala2.12` (tested — required for V100/T4 GPU clusters)
 - Unity Catalog: Requires `data_security_mode: SINGLE_USER`
 
 **Gotcha:** The `-cpu-ml-` suffix is required for the ML Runtime. Using the plain `-scala2.13` runtime will NOT have XGBoost, Ray, or MLflow pre-installed.
@@ -307,6 +307,64 @@ When multiple agents (Codex, Claude, manual edits) push code to the workspace in
 
 ---
 
+### L16: vCPU detection regex must handle NC-series GPU node types
+
+**Severity:** High — causes immediate crash on GPU clusters
+**Track:** Ray GPU
+**Date discovered:** 2026-04-13
+**Status:** RESOLVED
+
+**Problem:**
+The notebook's vCPU auto-detection regex `re.search(r"[de](\d+)", node_type)` only matches D-series (D16sv5 → 16) and E-series (E16sv5 → 16) node types. NC-series GPU nodes (NC6sv3, NC8asT4v3) don't have a `d` or `e` prefix before the digit count. The regex returns None, falling back to a default of 8 vCPUs.
+
+For NC6s_v3 (6 vCPUs), this means `allocatable_cpus_per_node = 8 - 1 = 7`, and `setup_ray_cluster(num_cpus_worker_node=7)` requests 7 CPUs on a 6-core node → immediate crash: `ValueError: cpu number per Ray worker node should be <= spark worker node CPU cores`.
+
+**Fix:** Chain a second regex for NC-series:
+```python
+node_vcpus_match = re.search(r"[de](\d+)", node_type_lower) or re.search(r"nc(\d+)", node_type_lower)
+```
+
+---
+
+### L17: Azure GPU VM quota limits determine available GPU families
+
+**Track:** GPU
+**Date discovered:** 2026-04-13
+**Status:** Informational
+
+Azure subscriptions have per-family GPU core quotas. On this workspace:
+- **NCsv3 (V100):** 100 cores — enough for 9× NC6s_v3 (54 cores) or 8× NC12s_v3 (96 cores)
+- **NCASv3_T4 (T4):** 0 cores allocated — all T4 runs fail with AZURE_QUOTA_EXCEEDED_EXCEPTION
+- **NC_A100_v4:** No quota reported (likely 0)
+- **NC_H100_v5:** 0 cores confirmed
+
+**Impact:** You can only use V100 for multi-node GPU training. The 100-core V100 quota supports one 9-node cluster at a time (54 cores); a second concurrent GPU cluster would need ≤46 cores.
+
+**To check quota:** Use the Databricks `clusters/list-node-types` API — `node_info.available_core_quota` shows remaining cores per family.
+
+### L18: Concurrent GPU clusters cause Azure quota contention (partial executor registration)
+
+**Severity:** High — silently degrades training performance
+**Track:** Ray GPU
+**Date discovered:** 2026-04-15
+**Status:** RESOLVED — root cause identified
+
+**Problem:**
+GPU benchmark runs showed only 4-5 of 8 requested workers registering. This appeared to be a Spark/Ray executor registration issue on GPU ML Runtime, but was actually Azure quota contention.
+
+**Root Cause:**
+Two GPU benchmark jobs (10M and 30M) were submitted simultaneously, each requesting 8 workers + 1 driver = 9× NC6s_v3 = 54 vCPUs. Combined need: 108 cores. Available NCsv3 quota: 100 cores.
+
+**Evidence from cluster event logs:**
+- **10M cluster:** Started with 5 workers (quota allowed 36 cores initially). AUTORECOVERY eventually scaled to 8 after 30M cluster stabilized.
+- **30M cluster:** Started with 4 workers. Resize to 8 failed: `AZURE_QUOTA_EXCEEDED_EXCEPTION` — "Current Usage: 96, Additional Required: 18, New Limit Required: 114". Stuck at 4-5 workers for entire run.
+
+**Fix:** Run GPU benchmarks sequentially, not concurrently. Alternatively, request ≤6 workers per cluster (7 nodes × 6 vCPUs = 42 cores; two clusters = 84 < 100 quota).
+
+**Key insight:** Databricks does NOT fail the job when Azure can't provision all requested workers. Instead, it starts the cluster with partial workers, begins the notebook, then attempts auto-recovery in the background. The notebook's `sc._jsc.sc().getExecutorMemoryStatus().size() - 1` captures whatever partial count is available at that moment.
+
+---
+
 ## Open Questions / Future Learnings
 
 ### Q1: Does Plasma tuning matter at 100M+ rows?
@@ -314,8 +372,8 @@ When multiple agents (Codex, Claude, manual edits) push code to the workspace in
 - **Next step:** Generate `large` preset and run Plasma sweep.
 
 ### Q2: GPU XGBoost scaling characteristics?
-- **Hypothesis:** GPU-based XGBoost (`tree_method: "gpu_hist"`) has different scaling — GPU memory is the constraint, not CPU.
-- **Next step:** Create `feat/gpu-scaling` branch, test on NC-series Azure VMs.
+- **Hypothesis:** GPU-based XGBoost (`device: "cuda"`) has different scaling — GPU memory is the constraint, not CPU.
+- **Status:** Partially answered. GPU is NOT cost-effective at 10-30M scale (1.6-2× slower, 3-8× more expensive than CPU). Results were further degraded by concurrent cluster quota contention (L18) — only 4-5 of 8 workers were available. A re-run with full 8 workers (sequential launch) might improve GPU times but unlikely to beat CPU at these scales. GPU may become competitive at 100M+ where CPU clusters need more nodes.
 
 ### Q3: Can we get super-linear speedup at larger data sizes?
 - **Hypothesis:** The super-linear speedup (L4) disappears at very large data sizes where all configurations exceed cache.

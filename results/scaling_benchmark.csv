@@ -1,0 +1,35 @@
+run_name,dataset,rows,features,training_mode,node_type,num_workers,cpus_total,ram_gb,gpu,data_load_sec,split_sec,train_sec,total_sec,auc_pr,auc_roc,f1,status,mlflow_run_id,notes
+10k_single_d16s,imbalanced_10k,10000,20,single_node,Standard_D16s_v5,0,16,64,,,,5.6,,0.9966,,,FINISHED,,existing - from configs
+10m_single_e16s,imbalanced_10m,10000000,250,single_node,Standard_E16s_v5,0,16,128,,,,128.0,186.0,1.0,,,FINISHED,,existing - from configs
+10m_single_e32s,imbalanced_10m,10000000,250,single_node,Standard_E32s_v5,0,32,256,,,,76.0,115.0,1.0,,,FINISHED,,existing - from configs
+1m_ray_2w_d8s,imbalanced_1m,1000000,100,ray_distributed,Standard_D8s_v3,2,14,,,,,45.0,,,,,,FINISHED,,existing - phase 1
+1m_ray_4w_d8s,imbalanced_1m,1000000,100,ray_distributed,Standard_D8s_v3,4,28,,,,,37.0,,,,,,FINISHED,,existing - phase 1
+1m_ray_8w_d8s,imbalanced_1m,1000000,100,ray_distributed,Standard_D8s_v3,8,56,,,,,38.0,,,,,,FINISHED,,existing - phase 1 (diminishing returns)
+10m_ray_4w_d16s,imbalanced_10m,10000000,250,ray_distributed,Standard_D16s_v5,4,56,256,,,,80.0,128.0,1.0,,,FINISHED,,existing - with OMP fix
+10m_ray_4w_e16s,imbalanced_10m,10000000,250,ray_distributed,Standard_E16s_v5,4,56,512,,,,79.0,126.0,1.0,,,FINISHED,,existing - with OMP fix
+10m_gpu_v100_nc6s,imbalanced_10m,10000000,250,gpu_single,Standard_NC6s_v3,0,6,112,V100_16GB,691.0,44.9,55.2,791.1,1.0,1.0,0.9997,FINISHED,29a30be5746244ae9ad7a734bfdc6001,new benchmark
+30m_ray_8w_d16s,imbalanced_30m,30000000,250,ray_distributed,Standard_D16s_v5,8,112,512,,7.8,26.0,276.6,349.5,1.0,1.0,0.9999,FINISHED,c032757866df4d04ab17b80c868efe7e,new benchmark
+30m_single_e32s,imbalanced_30m,30000000,250,single_node,Standard_E32s_v5,0,32,256,,,,,,,,,OOM,d6396b870e0a4d19ae3169f92c40fa38,OOM at toPandas - 256GB insufficient
+10m_ray_2w_d16s,imbalanced_10m,10000000,250,ray_distributed,Standard_D16s_v5,2,28,128,,162.7,0.1,533.0,,,,,,090bb5a78b0049b38a666aa1ce430d6f,train completed but eval/logging failed - status FAILED in MLflow
+10m_gpu_t4_nc4as,imbalanced_10m,10000000,250,gpu_single,Standard_NC4as_T4_v3,0,4,28,T4_16GB,,,,,,,,,OOM,OOM at toPandas - 28GB system RAM too small for 10M rows
+10m_ray_8w_d16s,imbalanced_10m,10000000,250,ray_distributed,Standard_D16s_v5,8,112,512,,,,,,,,,,INCOMPLETE,,agent session expired before completion
+30m_gpu_t4_nc16as,imbalanced_30m,30000000,250,gpu_single,Standard_NC16as_T4_v3,0,16,110,T4x4_64GB,,,,,,,,,OOM,,OOM at toPandas - 110GB system RAM insufficient for 30M
+30m_gpu_v100_nc12s,imbalanced_30m,30000000,250,gpu_single,Standard_NC12s_v3,0,12,224,V100x2_32GB,270.0,,,,,,,,OOM,,toPandas succeeded (270s) then OOM at DMatrix creation
+30m_direct_v100_nc12s,imbalanced_30m,30000000,250,direct_parquet_gpu,Standard_NC12s_v3,0,12,224,V100x2_32GB,375.0,,,,,,,,OOM,,pyarrow loaded 30.1GB OK - OOM at DMatrix creation
+30m_direct_t4_nc16as,imbalanced_30m,30000000,250,direct_parquet_gpu,Standard_NC16as_T4_v3,0,16,110,T4x4_64GB,,,,,,,,,OOM,,OOM during Spark write to local parquet - 110GB insufficient
+10m_sparkxgb_e16s,imbalanced_10m,10000000,250,spark_xgboost,Standard_E16s_v5,1,16,128,,141.0,,892.3,1033.3,1.0,1.0,,FINISHED,,nthread=1 default - 100 rounds (capped from 200)
+30m_sparkxgb_4w_d16s,imbalanced_30m,30000000,250,spark_xgboost,Standard_D16s_v5,4,56,256,,208.6,,822.4,1030.9,1.0,1.0,0.9999,FINISHED,,nthread=1 default - 100 rounds (capped from 200)
+10m_sparkxgb_v2_e16s,imbalanced_10m,10000000,250,spark_xgboost_v2,Standard_E16s_v5,1,16,128,,,,303.1,1102.3,1.0,1.0,,FINISHED,,v2 corrected: n_estimators=200 spark.task.cpus=16 - 200 rounds confirmed
+30m_sparkxgb_v2_4w_d16s,imbalanced_30m,30000000,250,spark_xgboost_v2,Standard_D16s_v5,4,56,256,,,,342.4,846.2,1.0,1.0,,FINISHED,,v2 corrected: n_estimators=200 spark.task.cpus=16 - 200 rounds confirmed
+10m_gpu_direct_v100,imbalanced_10m,10000000,250,gpu_direct_parquet,Standard_NC6s_v3,0,6,112,V100_16GB,235.7,,29.2,374.6,1.0,1.0,0.9998,FINISHED,39a30079375a4ab2ad44e33f5ef121fc,direct parquet: spark_write=228s pyarrow_read=8s train=29s - 2.1x faster total vs toPandas (791s)
+100m_single_e32s,imbalanced_100m,100000000,500,single_node,Standard_E32s_v5,0,32,256,,,,,,,,,OOM,,OOM at toPandas - 100M x 500 x 8B = 400GB raw exceeds 256GB RAM. Disk expanded before crash.
+100m_ray_8w_d16s,imbalanced_100m,100000000,500,ray_distributed,Standard_D16s_v5,8,112,512,,,,,,,,,OOM,,OOM at toPandas on driver - 512GB cluster RAM irrelevant since toPandas collects to single driver (64GB). Disk expanded 3x before crash.
+10m_ray_8w_d16s,imbalanced_10m,10000000,250,ray_distributed,Standard_D16s_v5,8,112,512,,,,,,,,,OOM,,toPandas OK but OOM at ray.data.from_pandas() - 54.6/57.4GB (95%) memory. ray.put() for Object Store exceeded D16s 64GB driver limit.
+30m_ray_4w_d16s,imbalanced_30m,30000000,250,ray_distributed,Standard_D16s_v5,4,56,256,,,,,,,,,FAILED,,toPandas failed: spark.driver.maxResultSize exceeded (15.7GB limit). Arrow serialization of 30M x 250 > 15.7GB. Needs spark.driver.maxResultSize=0.
+100m_sparkxgb_8w_d16s,imbalanced_100m,100000000,501,spark_xgboost_v2,Standard_D16s_v5,8,112,512,,2.9,439.6,4066.5,4578.7,1.0,1.0,1.0,FINISHED,18ceb9a40248,SparkXGB v2: n_estimators=200 spark.task.cpus=16 - 200 rounds confirmed
+30m_raydata_8w_d16s,imbalanced_30m,30000000,250,ray_data,Standard_D16s_v5,8,112,512,,61.4,14.6,291.5,292.0,1.0,1.0,1.0,FINISHED,4099f22723b5,Ray Data: read_databricks_tables bypass toPandas entirely
+10m_raydata_4w_d16s,imbalanced_10m,10000000,250,ray_data,Standard_D16s_v5,4,56,256,,70.1,13.8,172.1,303.0,0.030,0.648,,FINISHED,6a6db0d5574b,Ray Data notebook-fixes branch: 4W D16s max_depth=8 rounds=200 - AUC lower due to 250-feature subset
+100m_raydata_8w_e16s,imbalanced_100m,100000000,400,ray_data,Standard_E16s_v5,8,112,1024,,27.0,37.5,659.7,774.9,0.146,0.775,,FINISHED,9ca5a39d2301,Ray Data ON_DEMAND: 8W E16s max_depth=8 rounds=200 - 5.9x faster than SparkXGB 100M
+100m_raydata_8w_e16s_spot,imbalanced_100m,100000000,400,ray_data,Standard_E16s_v5,8,112,1024,,,,,,,,,FAILED,2bb56859b2c7,Spot VM eviction after ~17min training - COMMUNICATION_LOST / CLOUD_FAILURE. NOT OOM (mem 33%).
+10m_raygpu_8w_v100,imbalanced_10m,10000000,250,ray_data_gpu,Standard_NC6s_v3,5,20,560,V100_16GBx5,,,288.9,591.5,0.031,,,FINISHED,fc2aec54c45e,Ray Data GPU: 8W requested but only 5 executors registered. device=cuda. GPU slower than CPU (591s vs 303s CPU)
+30m_raygpu_8w_v100,imbalanced_30m,30000000,250,ray_data_gpu,Standard_NC6s_v3,4,16,448,V100_16GBx4,,,282.3,472.0,0.032,,,FINISHED,bcff5a3947c2,Ray Data GPU: 8W requested but only 4 executors registered. device=cuda. GPU slower than CPU (472s vs 292s CPU)
