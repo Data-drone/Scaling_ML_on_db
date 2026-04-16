@@ -363,6 +363,49 @@ Two GPU benchmark jobs (10M and 30M) were submitted simultaneously, each request
 
 **Key insight:** Databricks does NOT fail the job when Azure can't provision all requested workers. Instead, it starts the cluster with partial workers, begins the notebook, then attempts auto-recovery in the background. The notebook's `sc._jsc.sc().getExecutorMemoryStatus().size() - 1` captures whatever partial count is available at that moment.
 
+### L19: `read_databricks_tables()` deadlocks without explicit `catalog`/`schema` params
+
+**Severity:** Critical — causes indefinite hang after Ray claims Spark executors
+**Track:** Ray Scaling, Ray GPU
+**Date discovered:** 2026-04-16
+**Status:** RESOLVED
+
+**Problem:**
+After replacing all visible `spark.*` calls with REST API alternatives (L16, SQL Statement API, Clusters API, dbutils context), GPU runs still hung indefinitely at the `ray.data.read_databricks_tables()` call. MLflow breadcrumbs confirmed the stall point: `bc_read_databricks_tables_call` logged at 35.6s, but `bc_read_databricks_tables_returned` never appeared.
+
+**Root Cause:**
+When `catalog=` and `schema=` are NOT passed to `read_databricks_tables()`, the function internally calls:
+```python
+SparkSession.getActiveSession().sql("SELECT CURRENT_CATALOG()").collect()
+SparkSession.getActiveSession().sql("SELECT CURRENT_DATABASE()").collect()
+```
+These Spark SQL `.collect()` calls require Spark executors. But `setup_ray_cluster()` has already claimed ALL executors for Ray workers. The `.collect()` blocks forever waiting for an executor that will never become available — a classic resource deadlock.
+
+**Why it was hard to find:**
+- No `spark.*` calls visible in the notebook code — the Spark usage is hidden inside Ray's `read_databricks_tables()` implementation
+- The hang produces no error, no timeout, no log output — just silence
+- Granting CAN_MANAGE on the SQL warehouse did NOT help (red herring — the hang is in Spark, not the warehouse)
+
+**Diagnosis approach:**
+1. Added MLflow breadcrumbs (`mlflow.log_param("bc_<label>", elapsed)`) at each cell boundary
+2. Added UC Volume diagnostic logging (`/Volumes/.../ray_results/_diag_*.log`)
+3. Checked warehouse query history — no SELECT queries ever reached the warehouse, confirming hang was pre-query
+4. Researched `read_databricks_tables` source — found the internal `SparkSession.sql()` fallback
+
+**Fix:**
+Always pass `catalog=` and `schema=` explicitly:
+```python
+# DEADLOCKS — internal SparkSession.sql() call
+ray.data.read_databricks_tables(warehouse_id=wh_id, query=query)
+
+# WORKS — skips Spark fallback entirely
+ray.data.read_databricks_tables(warehouse_id=wh_id, query=query, catalog=catalog, schema=schema)
+```
+
+**Broader lesson:** After `setup_ray_cluster()`, ANY library function that internally touches SparkSession will deadlock. Audit all library calls in the post-Ray-init code path, not just your own code.
+
+---
+
 ---
 
 ## Open Questions / Future Learnings
