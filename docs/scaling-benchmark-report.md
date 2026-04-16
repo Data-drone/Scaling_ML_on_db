@@ -54,11 +54,11 @@ comparing single-node CPU, Ray Data distributed, SparkXGB, and GPU training acro
 | SparkXGB v2 4W D16s | 30M | 30M | 250 | D16s_v5 | 256GB | — | 4 | 342 | 846 | 1.0 | v2 (corrected) |
 | GPU Direct V100 | 10M | 10M | 250 | NC6s_v3 | 112GB | V100 | 0 | 29 | 375 | 1.0 | OK (direct-parquet) |
 | SparkXGB v2 8W D16s | 100M | 100M | 501 | D16s_v5 | 64GB | — | 8 | 4067 | 4579 | 1.0 | v2 (n_estimators=200 task.cpus=16) |
-| Ray Data 8W D16s | 30M | 30M | 250 | D16s_v5 | 64GB | — | 8 | 291 | 292 | 1.0 | OK (read_databricks_tables) |
-| Ray Data 4W D16s | 10M | 10M | 250 | D16s_v5 | 64GB | — | 4 | 172 | 303 | 0.03 | OK (notebook-fixes branch) |
-| Ray Data 8W E16s | 100M | 100M | 400 | E16s_v5 | 128GB | — | 8 | 660 | 775 | 0.15 | OK (ON_DEMAND) |
-| Ray GPU 5W V100 | 10M | 10M | 250 | NC6s_v3 | 112GB | V100 | 5 | 289 | 592 | 0.03 | OK (device=cuda) |
-| Ray GPU 4W V100 | 30M | 30M | 250 | NC6s_v3 | 112GB | V100 | 4 | 282 | 472 | 0.03 | OK (device=cuda) |
+| Ray Data 8W D16s | 30M | 30M | 250 | D16s_v5 | 64GB | — | 8 | 291 | 292 | ⚠️ INVALID | INVALIDATED — eval column mismatch (L20). Timing valid, re-run needed |
+| Ray Data 4W D16s | 10M | 10M | 250 | D16s_v5 | 64GB | — | 4 | 172 | 303 | ⚠️ INVALID | INVALIDATED — eval column mismatch (L20). Timing valid, re-run needed |
+| Ray Data 8W E16s | 100M | 100M | 400 | E16s_v5 | 128GB | — | 8 | 660 | 775 | ⚠️ INVALID | INVALIDATED — eval column mismatch (L20). Timing valid, re-run needed |
+| Ray GPU 5W V100 | 10M | 10M | 250 | NC6s_v3 | 112GB | V100 | 5 | 289 | 592 | ⚠️ INVALID | INVALIDATED — eval column mismatch (L20). Timing valid, re-run needed |
+| Ray GPU 4W V100 | 30M | 30M | 250 | NC6s_v3 | 112GB | V100 | 4 | 282 | 472 | ⚠️ INVALID | INVALIDATED — eval column mismatch (L20). Timing valid, re-run needed |
 
 ### Failed Runs (OOM / Partial)
 
@@ -521,9 +521,9 @@ All run data is tracked in MLflow experiment 3191770590499292 and archived in
 | 30m_sparkxgb_v2_4w | 30M | SparkXGB v2 | D16s_v5 | 4 | — | 342 | 846 | 1.0 | v2 (corrected) |
 | 10m_gpu_direct_v100 | 10M | Direct+GPU | NC6s_v3 | 0 | 236 | 29 | 375 | 1.0 | OK (2.1× vs toPandas) |
 | 100m_sparkxgb_8w | 100M | SparkXGB v2 | D16s_v5 | 8 | 3 | 4067 | 4579 | 1.0 | v2 (n_estimators=200, spark.task.cpus=16) |
-| 30m_raydata_8w | 30M | Ray Data | D16s_v5 | 8 | 61 | 291 | 292 | 1.0 | OK (read_databricks_tables) |
-| 10m_raydata_4w | 10M | Ray Data | D16s_v5 | 4 | 70 | 172 | 303 | 0.03 | OK (notebook-fixes branch) |
-| 100m_raydata_8w | 100M | Ray Data | E16s_v5 | 8 | 27 | 660 | 775 | 0.15 | OK (ON_DEMAND, 5.9× vs SparkXGB) |
+| 30m_raydata_8w | 30M | Ray Data | D16s_v5 | 8 | 61 | 291 | 292 | ⚠️ INVALID | INVALIDATED — eval column mismatch (L20). Timing valid. |
+| 10m_raydata_4w | 10M | Ray Data | D16s_v5 | 4 | 70 | 172 | 303 | ⚠️ INVALID | INVALIDATED — eval column mismatch (L20). Timing valid. |
+| 100m_raydata_8w | 100M | Ray Data | E16s_v5 | 8 | 27 | 660 | 775 | ⚠️ INVALID | INVALIDATED — eval column mismatch (L20). Timing valid. |
 | 100m_raydata_8w_spot | 100M | Ray Data | E16s_v5 | 8 | 138 | — | — | — | FAILED (spot eviction after ~17 min) |
-| 10m_raygpu_5w_v100 | 10M | Ray Data GPU | NC6s_v3 | 5 | — | 289 | 592 | 0.03 | OK (device=cuda, 5/8 executors) |
-| 30m_raygpu_4w_v100 | 30M | Ray Data GPU | NC6s_v3 | 4 | — | 282 | 472 | 0.03 | OK (device=cuda, 4/8 executors) |
+| 10m_raygpu_5w_v100 | 10M | Ray Data GPU | NC6s_v3 | 5 | — | 289 | 592 | ⚠️ INVALID | INVALIDATED — eval column mismatch (L20). Timing valid. |
+| 30m_raygpu_4w_v100 | 30M | Ray Data GPU | NC6s_v3 | 4 | — | 282 | 472 | ⚠️ INVALID | INVALIDATED — eval column mismatch (L20). Timing valid. |

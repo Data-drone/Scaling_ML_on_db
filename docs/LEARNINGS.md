@@ -406,6 +406,57 @@ ray.data.read_databricks_tables(warehouse_id=wh_id, query=query, catalog=catalog
 
 ---
 
+### L20: Eval column ordering must match training column ordering (sorted vs natural)
+
+**Severity:** Critical — produces silently wrong AUC/F1 metrics
+**Track:** Ray Scaling, Ray GPU
+**Date discovered:** 2026-04-16
+**Status:** RESOLVED
+
+**Problem:**
+All Ray Data runs (CPU and GPU) reported suspiciously low AUC-ROC (~0.65) and F1=0.0. Investigation showed ALL SP-launched Ray runs had this issue, not just GPU — including runs that previously appeared successful.
+
+**Root Cause:**
+Training uses `_sorted_feature_cols = sorted(feature_columns)` which produces lexicographic order:
+```
+f0, f1, f10, f100, f101, ..., f109, f11, f110, ...
+```
+But evaluation uses `feature_columns` which is in schema (natural) order:
+```
+f0, f1, f2, f3, f4, ..., f9, f10, f11, ...
+```
+For 250 features (f0–f249), 248 of 250 columns are in DIFFERENT positions between the two orderings. The model trains on one column layout but predicts on a shuffled version, producing near-random predictions.
+
+**Why it was hard to find:**
+- The `sorted()` call was added as a performance optimization in commit `e2b23ae` ("fix: address 9 issues") — it was buried among 8 other changes
+- The training function and eval function are in different cells (cell-20 and cell-18), making the mismatch non-obvious
+- AUC-ROC of ~0.65 (not 0.5) because some columns happen to be in the same position in both orderings
+- F1=0.0 because the threshold (0.5) doesn't match the shuffled prediction distribution
+
+**Affected runs (all INVALIDATED — timing data valid, metrics invalid):**
+- `10m_raydata_4w_d16s` (MLflow 6a6db0d5574b)
+- `30m_raydata_8w_d16s` (MLflow 4099f22723b5)
+- `100m_raydata_8w_e16s` (MLflow 9ca5a39d2301)
+- `10m_raygpu_8w_v100` (MLflow fc2aec54c45e)
+- `30m_raygpu_8w_v100` (MLflow bcff5a3947c2)
+
+**Fix:**
+Define `_sorted_feature_cols` once in cell-15 (after `feature_columns` is created) and use it consistently in BOTH training (cell-20 train_loop_config) AND evaluation (cell-18 `_ray_dataset_to_numpy` call):
+```python
+# Cell 15: Define sorted columns once
+_sorted_feature_cols = sorted(feature_columns)
+
+# Cell 18: Eval MUST use same ordering as training
+X_test_eval, y_test_eval = _ray_dataset_to_numpy(eval_test_ds, _sorted_feature_cols)
+
+# Cell 20: Training config passes sorted columns to workers
+train_loop_config = {..., "_feature_cols": _sorted_feature_cols}
+```
+
+**Broader lesson:** When training and evaluation use different code paths to build feature matrices, ensure column ordering is explicitly controlled in both. Never rely on implicit ordering from `batch.keys()`, DataFrame schema order, or variable scoping — pass the exact column list through.
+
+---
+
 ---
 
 ## Open Questions / Future Learnings
