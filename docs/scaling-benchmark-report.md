@@ -61,6 +61,7 @@ comparing single-node CPU, Ray Data distributed, SparkXGB, and GPU training acro
 | Ray GPU 4W V100 | 30M | 30M | 250 | NC6s_v3 | 112GB | V100 | 4 | 282 | 472 | ⚠️ INVALID | INVALIDATED — eval column mismatch (L20). Timing valid, re-run needed |
 | Ray Data v2 4W D16s | 10M | 10M | 250 | D16s_v5 | 64GB | — | 4 | 171 | 230 | 1.0 | Re-run with L20 fix. AUC confirmed. |
 | Ray Data v2 8W D16s | 30M | 30M | 250 | D16s_v5 | 64GB | — | 8 | 281 | 357 | 1.0 | Re-run with L20 fix. AUC confirmed. |
+| Ray Data v2 8W E16s | 100M | 100M | 400 | E16s_v5 | 128GB | — | 8 | 684 | 841 | 1.0 | Re-run with L20 fix. AUC confirmed. 5.4× faster than SparkXGB. |
 
 ### Failed Runs (OOM / Partial)
 
@@ -531,3 +532,4 @@ All run data is tracked in MLflow experiment 3191770590499292 and archived in
 | 30m_raygpu_4w_v100 | 30M | Ray Data GPU | NC6s_v3 | 4 | — | 282 | 472 | ⚠️ INVALID | INVALIDATED — eval column mismatch (L20). Timing valid. |
 | 10m_raydata_v2_4w | 10M | Ray Data v2 | D16s_v5 | 4 | 7 | 171 | 230 | 1.0 | L20 fix confirmed. AUC ~1.0. |
 | 30m_raydata_v2_8w | 30M | Ray Data v2 | D16s_v5 | 8 | 11 | 281 | 357 | 1.0 | L20 fix confirmed. AUC 1.0. |
+| 100m_raydata_v2_8w | 100M | Ray Data v2 | E16s_v5 | 8 | 67 | 684 | 841 | 1.0 | L20 fix confirmed. AUC 1.0. 5.4× vs SparkXGB. |
