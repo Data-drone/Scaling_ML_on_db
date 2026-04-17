@@ -24,9 +24,9 @@ comparing single-node CPU, Ray Data distributed, SparkXGB, and GPU training acro
 5. **SparkXGBClassifier works but is slow.** Corrected v2 with `n_estimators=200` + `spark.task.cpus=16`
    trained 30M in 342s (comparable to Ray's 277s), but total time is 2.4× worse (846s vs 350s)
    due to VectorAssembler and Spark scheduling overhead.
-6. **Distributed GPU (Ray Data + V100) is slower than CPU at 10-30M.** 10M GPU took 592s vs 303s CPU;
-   30M GPU took 472s vs 292s CPU. CUDA init overhead, GPU memory management, and fewer-than-requested
-   executors (4-5 of 8) negate any GPU compute advantage. Also 3-8× more expensive per run.
+6. **Distributed GPU (Ray Data + V100) converges with CPU at 100M.** At 10-30M, GPU is 1.3-1.8× slower.
+   At 100M, GPU (887s) nearly matches CPU (841s) — only 5% slower. But GPU costs 3.2× more ($8.82 vs $2.76).
+   GPU XGBoost on V100 is not cost-effective at any tested scale, though the performance gap closes at 100M.
 7. **Spot VMs are unreliable for long training.** A 100M spot run lost a node to eviction after 17 min.
    All production benchmarks should use ON_DEMAND.
 8. **OOM failures are informative.** 30M rows × 250 features × 8 bytes = 56GB raw, but toPandas()
@@ -62,6 +62,9 @@ comparing single-node CPU, Ray Data distributed, SparkXGB, and GPU training acro
 | Ray Data v2 4W D16s | 10M | 10M | 250 | D16s_v5 | 64GB | — | 4 | 171 | 230 | 1.0 | Re-run with L20 fix. AUC confirmed. |
 | Ray Data v2 8W D16s | 30M | 30M | 250 | D16s_v5 | 64GB | — | 8 | 281 | 357 | 1.0 | Re-run with L20 fix. AUC confirmed. |
 | Ray Data v2 8W E16s | 100M | 100M | 400 | E16s_v5 | 128GB | — | 8 | 684 | 841 | 1.0 | Re-run with L20 fix. AUC confirmed. 5.4× faster than SparkXGB. |
+| Ray GPU v2 8W V100 | 10M | 10M | 250 | NC6s_v3 | 112GB | V100 | 8 | 348 | 423 | 1.0 | Re-run with L20 + deadlock fix. All 8 GPUs. |
+| Ray GPU v2 8W V100 | 30M | 30M | 250 | NC6s_v3 | 112GB | V100 | 8 | 373 | 472 | 1.0 | Re-run with L20 + deadlock fix. All 8 GPUs. |
+| Ray GPU v2 8W V100 | 100M | 100M | 400 | NC6s_v3 | 112GB | V100 | 8 | 708 | 887 | 1.0 | 100M GPU completed. No OOM. All 8 V100s. |
 
 ### Failed Runs (OOM / Partial)
 
@@ -162,32 +165,38 @@ trains on GPU.
 
 | Config | Dataset | Workers | GPUs | Train(s) | Total(s) | vs CPU Total |
 |--------|---------|---------|------|----------|----------|-------------|
-| Ray GPU 5W V100 | 10M | 5 | 5×V100 | 289 | 592 | 1.95× slower (vs 303s CPU) |
-| Ray GPU 4W V100 | 30M | 4 | 4×V100 | 282 | 472 | 1.62× slower (vs 292s CPU) |
+| Ray GPU 5W V100 (v1) | 10M | 5 | 5×V100 | 289 | 592 | 1.95× slower (vs 303s CPU) |
+| Ray GPU 4W V100 (v1) | 30M | 4 | 4×V100 | 282 | 472 | 1.62× slower (vs 292s CPU) |
+| Ray GPU 8W V100 (v2) | 10M | 8 | 8×V100 | 348 | 423 | 1.84× slower (vs 230s CPU) |
+| Ray GPU 8W V100 (v2) | 30M | 8 | 8×V100 | 373 | 472 | 1.32× slower (vs 357s CPU) |
+| Ray GPU 8W V100 (v2) | 100M | 8 | 8×V100 | 708 | 887 | 1.05× slower (vs 841s CPU) |
+
+The v2 re-runs with the deadlock fix achieved all 8 GPU workers (vs 4-5 in v1). At 10-30M scale,
+GPU is 1.32-1.84× slower than CPU. At 100M the gap nearly closes to 1.05× — GPU train time (708s)
+is only 3.5% slower than CPU (684s), with total time 887s vs 841s.
 
 **Why GPU is slower at these scales:**
 
 1. **CUDA initialization overhead:** Each worker must initialize CUDA context (~10-30s per worker).
 2. **GPU memory management:** DMatrix-to-GPU transfer adds per-round overhead that doesn't exist in CPU `hist`.
-3. **Fewer workers than requested:** Only 4-5 of 8 requested executors registered on NC6s_v3 clusters,
-   reducing parallelism. This may be due to slow GPU node provisioning or Spark executor registration
-   timeouts on GPU ML Runtime.
-4. **CPU `hist` is already fast:** XGBoost's CPU histogram method is highly optimized. At 10-30M rows
-   per worker shard (1.25-7.5M per worker), CPU training is I/O-bound, not compute-bound.
+3. **CPU `hist` is already fast:** XGBoost's CPU histogram method is highly optimized. At 10-30M rows
+   per worker shard (1.25-3.75M per worker), CPU training is I/O-bound, not compute-bound.
 
 **Cost comparison (GPU vs CPU):**
 
 | Config | $/hr | Runtime | Cost | vs CPU |
 |--------|------|---------|------|--------|
-| Ray Data CPU 8W D16s (30M) | $9.00 | 292s | $0.73 | baseline |
-| Ray Data GPU 4W V100 (30M) | $15.90 | 472s | $2.08 | 2.8× more expensive |
-| Ray Data CPU 4W D16s (10M) | $5.00 | 303s | $0.42 | baseline |
-| Ray Data GPU 5W V100 (10M) | $19.88 | 592s | $3.27 | 7.8× more expensive |
+| Ray Data CPU 8W E16s (100M) | $11.79 | 841s | $2.76 | baseline |
+| Ray Data GPU 8W V100 v2 (100M) | $35.80 | 887s | $8.82 | 3.2× more expensive |
+| Ray Data CPU 8W D16s (30M) | $9.00 | 357s | $0.89 | baseline |
+| Ray Data GPU 8W V100 v2 (30M) | $35.80 | 472s | $4.69 | 5.3× more expensive |
+| Ray Data CPU 4W D16s (10M) | $5.00 | 230s | $0.32 | baseline |
+| Ray Data GPU 8W V100 v2 (10M) | $35.80 | 423s | $4.20 | 13× more expensive |
 
-**Takeaway:** Distributed GPU via Ray Data is *not cost-effective* for XGBoost at 10-30M scale.
-GPU XGBoost becomes worthwhile when (a) data is large enough that GPU compute dominates initialization
-overhead, and (b) GPU memory can hold the per-worker shard. The crossover likely starts at 100M+ rows
-with fewer, larger GPU nodes (e.g., A100 with 40/80GB VRAM).
+**Takeaway:** Distributed GPU via Ray Data is *not cost-effective* for XGBoost at any tested scale (10M-100M).
+At 100M, the performance gap nearly closes (887s GPU vs 841s CPU, only 5% slower), but the cost gap
+remains large (3.2× more expensive) due to V100 node pricing. GPU would need A100s (faster CUDA, more VRAM)
+or datasets beyond 100M to potentially become cost-competitive.
 
 ### 4. SparkXGBClassifier: Works but Has Gotchas
 
@@ -301,7 +310,7 @@ Cluster cost = (VM $/hr × nodes × 1.3) × (runtime / 3600).
 | Ray Data 4W D16s | 5 | $5.00 | 303s | $0.42 |
 | SparkXGB v2 E16s | 2 | $2.62 | 1102s | $0.80 |
 | GPU V100 toPandas | 1 | $3.98 | 791s | $0.87 |
-| Ray GPU 5W V100 | 6 | $23.85 | 592s | $3.92 |
+| Ray GPU 8W V100 v2 | 9 | $35.80 | 423s | $4.20 |
 
 *30M rows:*
 
@@ -310,22 +319,23 @@ Cluster cost = (VM $/hr × nodes × 1.3) × (runtime / 3600).
 | Ray Data 8W D16s | 9 | $9.00 | 292s | $0.73 |
 | Ray 8W D16s | 9 | $9.00 | 350s | $0.87 |
 | SparkXGB v2 4W D16s | 5 | $5.00 | 846s | $1.17 |
-| Ray GPU 4W V100 | 5 | $19.88 | 472s | $2.61 |
+| Ray GPU 8W V100 v2 | 9 | $35.80 | 472s | $4.69 |
 
 *100M rows:*
 
 | Config | Nodes | $/hr | Runtime | Cost |
 |--------|-------|------|---------|------|
-| Ray Data 8W E16s | 9 | $11.79 | 775s | $2.54 |
+| Ray Data 8W E16s | 9 | $11.79 | 841s | $2.76 |
+| Ray GPU 8W V100 v2 | 9 | $35.80 | 887s | $8.82 |
 | SparkXGB v2 8W D16s | 9 | $9.00 | 4579s | $11.43 |
 
 **Key cost insights:**
-- *100M:* Ray Data ($2.54) is *4.5× cheaper* than SparkXGB ($11.43), despite using more expensive E16s nodes.
-  The 5.9× speed advantage more than compensates for the higher per-hour rate.
+- *100M:* Ray Data CPU ($2.76) is *4.1× cheaper* than SparkXGB ($11.43) and *3.2× cheaper* than GPU ($8.82).
+  GPU is only 5% slower than CPU at 100M but 3.2× more expensive due to V100 node pricing.
 - *30M:* Ray Data ($0.73) is the cheapest successful approach. SparkXGB v2 ($1.17) is 60% more expensive.
 - *10M:* Single-node E16s ($0.07) is cheapest. Distributed approaches are 3-12× more expensive at this scale.
-- *GPU clusters are expensive per hour* ($35.80/hr for 9× V100 nodes). Confirmed not cost-effective
-  at 10-30M scale — GPU runs were 1.6-2× slower and 3-8× more expensive than CPU equivalents.
+- *GPU clusters are expensive per hour* ($35.80/hr for 9× V100 nodes). At 100M, GPU nearly matches CPU
+  speed (887s vs 841s) but costs 3.2× more. At 10-30M, GPU is 1.3-1.8× slower and 5-13× more expensive.
 
 ### 7. Data Quality Note
 
@@ -533,3 +543,6 @@ All run data is tracked in MLflow experiment 3191770590499292 and archived in
 | 10m_raydata_v2_4w | 10M | Ray Data v2 | D16s_v5 | 4 | 7 | 171 | 230 | 1.0 | L20 fix confirmed. AUC ~1.0. |
 | 30m_raydata_v2_8w | 30M | Ray Data v2 | D16s_v5 | 8 | 11 | 281 | 357 | 1.0 | L20 fix confirmed. AUC 1.0. |
 | 100m_raydata_v2_8w | 100M | Ray Data v2 | E16s_v5 | 8 | 67 | 684 | 841 | 1.0 | L20 fix confirmed. AUC 1.0. 5.4× vs SparkXGB. |
+| 10m_raygpu_v2_8w | 10M | Ray GPU v2 | NC6s_v3 | 8 | 8 | 348 | 423 | 1.0 | L20 + deadlock fix. All 8 V100 GPUs. |
+| 30m_raygpu_v2_8w | 30M | Ray GPU v2 | NC6s_v3 | 8 | 11 | 373 | 472 | 1.0 | L20 + deadlock fix. All 8 V100 GPUs. |
+| 100m_raygpu_v2_8w | 100M | Ray GPU v2 | NC6s_v3 | 8 | — | 708 | 887 | 1.0 | 100M GPU completed. All 8 V100s. No OOM. |
