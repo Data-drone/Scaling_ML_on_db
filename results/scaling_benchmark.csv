@@ -39,3 +39,9 @@ run_name,dataset,rows,features,training_mode,node_type,num_workers,cpus_total,ra
 10m_raygpu_v2_8w_v100,imbalanced_10m,10000000,250,ray_data_gpu,Standard_NC6s_v3,8,40,896,V100_16GBx8,8.4,10.1,347.9,422.9,1.0,1.0,1.0,FINISHED,b9c59b1511be,Re-run with L20 column ordering fix + deadlock fix. All 8 V100 workers. GPU util 92-100%.
 30m_raygpu_v2_8w_v100,imbalanced_30m,30000000,250,ray_data_gpu,Standard_NC6s_v3,8,40,896,V100_16GBx8,11.1,30.2,372.8,471.5,1.0,1.0,1.0,FINISHED,cf9dadbac6b1,Re-run with L20 column ordering fix + deadlock fix. All 8 V100 workers. GPU util 81-100%.
 100m_raygpu_v2_8w_v100,imbalanced_100m,100000000,400,ray_data_gpu,Standard_NC6s_v3,8,40,896,V100_16GBx8,,,708.4,887.4,1.0,,1.0,FINISHED,49af89dd0017,100M GPU re-run with L20 + deadlock fix. All 8 V100 workers. No OOM.
+30m_raydata_v2_4w_d16s,imbalanced_30m,30000000,250,ray_data,Standard_D16s_v5,4,56,256,,,,,453.7,1.0,1.0,1.0,FINISHED,,Scaling curve: 4W CPU Ray Data on 30M. train=375.9s total=453.7s.
+30m_raygpu_v2_2w_v100,imbalanced_30m,30000000,250,ray_data_gpu,Standard_NC6s_v3,2,10,224,V100_16GBx2,,,408.0,580.6,1.0,,1.0,FINISHED,,Scaling curve: 2W GPU Ray Data on 30M. train=408.0s total=580.6s.
+30m_raygpu_v2_4w_v100,imbalanced_30m,30000000,250,ray_data_gpu,Standard_NC6s_v3,4,20,448,V100_16GBx4,,,344.6,465.7,1.0,,1.0,FINISHED,,Scaling curve: 4W GPU Ray Data on 30M. train=344.6s total=465.7s.
+30m_sparkxgb_v2_2w_e16s,imbalanced_30m,30000000,250,spark_xgboost_v2,Standard_E16s_v5,2,32,256,,,,1073.1,1675.5,,,0.9999,FINISHED,,Scaling curve: 2W SparkXGB on 30M E16s. train=1073.1s total=1675.5s.
+30m_sparkxgb_v2_4w_e16s,imbalanced_30m,30000000,250,spark_xgboost_v2,Standard_E16s_v5,4,64,512,,,,571.4,880.7,,,0.9999,FINISHED,,Scaling curve: 4W SparkXGB on 30M E16s. train=571.4s total=880.7s.
+30m_sparkxgb_v2_8w_e16s,imbalanced_30m,30000000,250,spark_xgboost_v2,Standard_E16s_v5,8,128,1024,,,,337.4,507.2,,,0.9999,FINISHED,,Scaling curve: 8W SparkXGB on 30M E16s. train=337.4s total=507.2s.
