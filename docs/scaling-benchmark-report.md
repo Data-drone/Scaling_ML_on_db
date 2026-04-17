@@ -1,6 +1,6 @@
 # XGBoost Scaling Benchmark Report
 
-**Date:** 2026-04-13 (updated)
+**Date:** 2026-04-17 (updated with scaling curves)
 **Platform:** Azure Databricks (DBR 16.2 ML Runtime)
 **MLflow Experiment ID:** 3191770590499292
 **Datasets:** Unity Catalog `brian_gen_ai.xgb_scaling.{imbalanced_10k, imbalanced_1m, imbalanced_10m, imbalanced_30m, imbalanced_100m}`
@@ -27,9 +27,12 @@ comparing single-node CPU, Ray Data distributed, SparkXGB, and GPU training acro
 6. **Distributed GPU (Ray Data + V100) converges with CPU at 100M.** At 10-30M, GPU is 1.3-1.8× slower.
    At 100M, GPU (887s) nearly matches CPU (841s) — only 5% slower. But GPU costs 3.2× more ($8.82 vs $2.76).
    GPU XGBoost on V100 is not cost-effective at any tested scale, though the performance gap closes at 100M.
-7. **Spot VMs are unreliable for long training.** A 100M spot run lost a node to eviction after 17 min.
+7. **SparkXGB scales best with worker count.** On 30M, SparkXGB achieves 3.2× speedup from 2→8 workers
+   (near-linear). Ray GPU shows diminishing returns (1.1× from 2→8W) — per-worker shards too small for GPU benefit.
+   Ray CPU 4→8W gives 1.3× speedup. At 8W, SparkXGB train time (337s) nearly matches Ray CPU (281s).
+8. **Spot VMs are unreliable for long training.** A 100M spot run lost a node to eviction after 17 min.
    All production benchmarks should use ON_DEMAND.
-8. **OOM failures are informative.** 30M rows × 250 features × 8 bytes = 56GB raw, but toPandas()
+9. **OOM failures are informative.** 30M rows × 250 features × 8 bytes = 56GB raw, but toPandas()
    peak reaches ~168GB+. Even 256GB (E32s) and 224GB (NC12s) are insufficient.
 
 ## Benchmark Matrix
@@ -65,6 +68,12 @@ comparing single-node CPU, Ray Data distributed, SparkXGB, and GPU training acro
 | Ray GPU v2 8W V100 | 10M | 10M | 250 | NC6s_v3 | 112GB | V100 | 8 | 348 | 423 | 1.0 | Re-run with L20 + deadlock fix. All 8 GPUs. |
 | Ray GPU v2 8W V100 | 30M | 30M | 250 | NC6s_v3 | 112GB | V100 | 8 | 373 | 472 | 1.0 | Re-run with L20 + deadlock fix. All 8 GPUs. |
 | Ray GPU v2 8W V100 | 100M | 100M | 400 | NC6s_v3 | 112GB | V100 | 8 | 708 | 887 | 1.0 | 100M GPU completed. No OOM. All 8 V100s. |
+| Ray Data v2 4W D16s | 30M | 30M | 250 | D16s_v5 | 64GB | — | 4 | 376 | 454 | 1.0 | Scaling curve. |
+| Ray GPU v2 2W V100 | 30M | 30M | 250 | NC6s_v3 | 112GB | V100 | 2 | 408 | 581 | 1.0 | Scaling curve. |
+| Ray GPU v2 4W V100 | 30M | 30M | 250 | NC6s_v3 | 112GB | V100 | 4 | 345 | 466 | 1.0 | Scaling curve. |
+| SparkXGB v2 2W E16s | 30M | 30M | 250 | E16s_v5 | 128GB | — | 2 | 1073 | 1676 | 1.0 | Scaling curve. |
+| SparkXGB v2 4W E16s | 30M | 30M | 250 | E16s_v5 | 128GB | — | 4 | 571 | 881 | 1.0 | Scaling curve. |
+| SparkXGB v2 8W E16s | 30M | 30M | 250 | E16s_v5 | 128GB | — | 8 | 337 | 507 | 1.0 | Scaling curve. |
 
 ### Failed Runs (OOM / Partial)
 
@@ -197,6 +206,52 @@ is only 3.5% slower than CPU (684s), with total time 887s vs 841s.
 At 100M, the performance gap nearly closes (887s GPU vs 841s CPU, only 5% slower), but the cost gap
 remains large (3.2× more expensive) due to V100 node pricing. GPU would need A100s (faster CUDA, more VRAM)
 or datasets beyond 100M to potentially become cost-competitive.
+
+### 3c. Scaling Curves: Worker Count vs Training Time (30M)
+
+To measure horizontal scaling efficiency, we ran the 30M dataset across 2, 4, and 8 workers
+for three approaches: Ray Data CPU, Ray Data GPU, and SparkXGB v2.
+
+**Training time (seconds) by worker count:**
+
+| Workers | Ray CPU (D16s) | Ray GPU (V100) | SparkXGB v2 (E16s) |
+|---------|---------------|----------------|-------------------|
+| 2W      | OOM¹          | 408            | 1073              |
+| 4W      | 376           | 345            | 571               |
+| 8W      | 281           | 373            | 337               |
+
+¹ Ray CPU 2W OOM on D16s (64GB) — each worker gets ~15M rows × 250 features as DMatrix, exceeding available memory.
+
+**Total time (seconds) by worker count:**
+
+| Workers | Ray CPU (D16s) | Ray GPU (V100) | SparkXGB v2 (E16s) |
+|---------|---------------|----------------|-------------------|
+| 2W      | OOM           | 581            | 1676              |
+| 4W      | 454           | 466            | 881               |
+| 8W      | 357           | 472            | 507               |
+
+**Scaling efficiency (speedup relative to 2W baseline, using train time):**
+
+| Workers | Ray GPU | SparkXGB v2 |
+|---------|---------|-------------|
+| 2W      | 1.0×    | 1.0×        |
+| 4W      | 1.18×   | 1.88×       |
+| 8W      | 1.09×   | 3.18×       |
+
+**Key observations:**
+
+1. **SparkXGB scales best with workers.** 3.2× speedup from 2W→8W, near-linear scaling.
+   VectorAssembler and Spark task scheduling distribute well across executors.
+2. **Ray GPU shows diminishing returns.** Only 1.09-1.18× speedup from 2W→8W. At 30M,
+   per-worker data shards (3.75M rows at 8W) are too small for GPU to overcome CUDA overhead.
+3. **Ray CPU needs ≥4 workers for 30M.** 2W OOMs on D16s — the per-worker DMatrix is too large.
+   4W→8W gives 1.34× speedup on training (376→281s).
+4. **SparkXGB 8W (337s train) nearly matches Ray CPU 8W (281s train).** At 8 workers,
+   SparkXGB training is within 20% of Ray. The total time gap (507s vs 357s) is due to
+   VectorAssembler overhead (~170s).
+5. **Cost implications:** SparkXGB on E16s ($1.31/hr/node) is cheaper per node than GPU on
+   NC6s_v3 ($3.98/hr/node). At 8W, SparkXGB total cost ≈ $1.66 vs Ray CPU ≈ $0.89 vs
+   Ray GPU ≈ $4.69. Ray CPU remains the most cost-effective.
 
 ### 4. SparkXGBClassifier: Works but Has Gotchas
 
@@ -546,3 +601,9 @@ All run data is tracked in MLflow experiment 3191770590499292 and archived in
 | 10m_raygpu_v2_8w | 10M | Ray GPU v2 | NC6s_v3 | 8 | 8 | 348 | 423 | 1.0 | L20 + deadlock fix. All 8 V100 GPUs. |
 | 30m_raygpu_v2_8w | 30M | Ray GPU v2 | NC6s_v3 | 8 | 11 | 373 | 472 | 1.0 | L20 + deadlock fix. All 8 V100 GPUs. |
 | 100m_raygpu_v2_8w | 100M | Ray GPU v2 | NC6s_v3 | 8 | — | 708 | 887 | 1.0 | 100M GPU completed. All 8 V100s. No OOM. |
+| 30m_raydata_v2_4w | 30M | Ray Data v2 | D16s_v5 | 4 | — | 376 | 454 | 1.0 | Scaling curve: 4W CPU. |
+| 30m_raygpu_v2_2w | 30M | Ray GPU v2 | NC6s_v3 | 2 | — | 408 | 581 | 1.0 | Scaling curve: 2W GPU. |
+| 30m_raygpu_v2_4w | 30M | Ray GPU v2 | NC6s_v3 | 4 | — | 345 | 466 | 1.0 | Scaling curve: 4W GPU. |
+| 30m_sparkxgb_v2_2w | 30M | SparkXGB v2 | E16s_v5 | 2 | — | 1073 | 1676 | 1.0 | Scaling curve: 2W SparkXGB. |
+| 30m_sparkxgb_v2_4w | 30M | SparkXGB v2 | E16s_v5 | 4 | — | 571 | 881 | 1.0 | Scaling curve: 4W SparkXGB. |
+| 30m_sparkxgb_v2_8w | 30M | SparkXGB v2 | E16s_v5 | 8 | — | 337 | 507 | 1.0 | Scaling curve: 8W SparkXGB. |
