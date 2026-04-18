@@ -363,6 +363,100 @@ Two GPU benchmark jobs (10M and 30M) were submitted simultaneously, each request
 
 **Key insight:** Databricks does NOT fail the job when Azure can't provision all requested workers. Instead, it starts the cluster with partial workers, begins the notebook, then attempts auto-recovery in the background. The notebook's `sc._jsc.sc().getExecutorMemoryStatus().size() - 1` captures whatever partial count is available at that moment.
 
+### L19: `read_databricks_tables()` deadlocks without explicit `catalog`/`schema` params
+
+**Severity:** Critical — causes indefinite hang after Ray claims Spark executors
+**Track:** Ray Scaling, Ray GPU
+**Date discovered:** 2026-04-16
+**Status:** RESOLVED
+
+**Problem:**
+After replacing all visible `spark.*` calls with REST API alternatives (L16, SQL Statement API, Clusters API, dbutils context), GPU runs still hung indefinitely at the `ray.data.read_databricks_tables()` call. MLflow breadcrumbs confirmed the stall point: `bc_read_databricks_tables_call` logged at 35.6s, but `bc_read_databricks_tables_returned` never appeared.
+
+**Root Cause:**
+When `catalog=` and `schema=` are NOT passed to `read_databricks_tables()`, the function internally calls:
+```python
+SparkSession.getActiveSession().sql("SELECT CURRENT_CATALOG()").collect()
+SparkSession.getActiveSession().sql("SELECT CURRENT_DATABASE()").collect()
+```
+These Spark SQL `.collect()` calls require Spark executors. But `setup_ray_cluster()` has already claimed ALL executors for Ray workers. The `.collect()` blocks forever waiting for an executor that will never become available — a classic resource deadlock.
+
+**Why it was hard to find:**
+- No `spark.*` calls visible in the notebook code — the Spark usage is hidden inside Ray's `read_databricks_tables()` implementation
+- The hang produces no error, no timeout, no log output — just silence
+- Granting CAN_MANAGE on the SQL warehouse did NOT help (red herring — the hang is in Spark, not the warehouse)
+
+**Diagnosis approach:**
+1. Added MLflow breadcrumbs (`mlflow.log_param("bc_<label>", elapsed)`) at each cell boundary
+2. Added UC Volume diagnostic logging (`/Volumes/.../ray_results/_diag_*.log`)
+3. Checked warehouse query history — no SELECT queries ever reached the warehouse, confirming hang was pre-query
+4. Researched `read_databricks_tables` source — found the internal `SparkSession.sql()` fallback
+
+**Fix:**
+Always pass `catalog=` and `schema=` explicitly:
+```python
+# DEADLOCKS — internal SparkSession.sql() call
+ray.data.read_databricks_tables(warehouse_id=wh_id, query=query)
+
+# WORKS — skips Spark fallback entirely
+ray.data.read_databricks_tables(warehouse_id=wh_id, query=query, catalog=catalog, schema=schema)
+```
+
+**Broader lesson:** After `setup_ray_cluster()`, ANY library function that internally touches SparkSession will deadlock. Audit all library calls in the post-Ray-init code path, not just your own code.
+
+---
+
+### L20: Eval column ordering must match training column ordering (sorted vs natural)
+
+**Severity:** Critical — produces silently wrong AUC/F1 metrics
+**Track:** Ray Scaling, Ray GPU
+**Date discovered:** 2026-04-16
+**Status:** RESOLVED
+
+**Problem:**
+All Ray Data runs (CPU and GPU) reported suspiciously low AUC-ROC (~0.65) and F1=0.0. Investigation showed ALL SP-launched Ray runs had this issue, not just GPU — including runs that previously appeared successful.
+
+**Root Cause:**
+Training uses `_sorted_feature_cols = sorted(feature_columns)` which produces lexicographic order:
+```
+f0, f1, f10, f100, f101, ..., f109, f11, f110, ...
+```
+But evaluation uses `feature_columns` which is in schema (natural) order:
+```
+f0, f1, f2, f3, f4, ..., f9, f10, f11, ...
+```
+For 250 features (f0–f249), 248 of 250 columns are in DIFFERENT positions between the two orderings. The model trains on one column layout but predicts on a shuffled version, producing near-random predictions.
+
+**Why it was hard to find:**
+- The `sorted()` call was added as a performance optimization in commit `e2b23ae` ("fix: address 9 issues") — it was buried among 8 other changes
+- The training function and eval function are in different cells (cell-20 and cell-18), making the mismatch non-obvious
+- AUC-ROC of ~0.65 (not 0.5) because some columns happen to be in the same position in both orderings
+- F1=0.0 because the threshold (0.5) doesn't match the shuffled prediction distribution
+
+**Affected runs (all INVALIDATED — timing data valid, metrics invalid):**
+- `10m_raydata_4w_d16s` (MLflow 6a6db0d5574b)
+- `30m_raydata_8w_d16s` (MLflow 4099f22723b5)
+- `100m_raydata_8w_e16s` (MLflow 9ca5a39d2301)
+- `10m_raygpu_8w_v100` (MLflow fc2aec54c45e)
+- `30m_raygpu_8w_v100` (MLflow bcff5a3947c2)
+
+**Fix:**
+Define `_sorted_feature_cols` once in cell-15 (after `feature_columns` is created) and use it consistently in BOTH training (cell-20 train_loop_config) AND evaluation (cell-18 `_ray_dataset_to_numpy` call):
+```python
+# Cell 15: Define sorted columns once
+_sorted_feature_cols = sorted(feature_columns)
+
+# Cell 18: Eval MUST use same ordering as training
+X_test_eval, y_test_eval = _ray_dataset_to_numpy(eval_test_ds, _sorted_feature_cols)
+
+# Cell 20: Training config passes sorted columns to workers
+train_loop_config = {..., "_feature_cols": _sorted_feature_cols}
+```
+
+**Broader lesson:** When training and evaluation use different code paths to build feature matrices, ensure column ordering is explicitly controlled in both. Never rely on implicit ordering from `batch.keys()`, DataFrame schema order, or variable scoping — pass the exact column list through.
+
+---
+
 ---
 
 ## Open Questions / Future Learnings
